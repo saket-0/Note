@@ -27,6 +27,7 @@ class Note {
   final String title;
   final String content;
   final String? imagePath;
+  final String fileType; // new
   final int? folderId;
   final DateTime createdAt;
 
@@ -35,6 +36,7 @@ class Note {
     required this.title,
     required this.content,
     this.imagePath,
+    this.fileType = 'text',
     this.folderId,
     required this.createdAt,
   });
@@ -45,6 +47,7 @@ class Note {
       title: map['title'],
       content: map['content'],
       imagePath: map['image_path'],
+      fileType: map['file_type'] ?? 'text', // Safe default
       folderId: map['folder_id'],
       createdAt: DateTime.fromMillisecondsSinceEpoch(map['created_at']),
     );
@@ -87,19 +90,34 @@ class AppDatabase {
             title TEXT NOT NULL,
             content TEXT NOT NULL,
             image_path TEXT,
+            file_type TEXT DEFAULT 'text', -- Added file_type with a default
             folder_id INTEGER,
             created_at INTEGER NOT NULL,
             FOREIGN KEY (folder_id) REFERENCES folders (id) ON DELETE CASCADE
           )
         ''');
       },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 1) {
+          // This block would typically handle migrations from older versions.
+          // Since we are starting with version 1 and adding a column,
+          // we'll handle it with an ALTER TABLE statement if the column is missing.
+        }
+      },
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
+        // Auto-migration: check if file_type exists, if not add it
+        try {
+          await db.query('notes', columns: ['file_type'], limit: 1);
+        } catch (e) {
+          // Column likely missing, add it
+          await db.execute('ALTER TABLE notes ADD COLUMN file_type TEXT DEFAULT \'text\'');
+        }
       },
     );
   }
 
-  // --- Folders API ---
+  // --- CRUD for Folders ---
   
   Future<int> createFolder(String name, int? parentId) async {
     final db = await database;
@@ -133,12 +151,13 @@ class AppDatabase {
     return null;
   }
 
-  // --- Notes API ---
+  // --- CRUD for Notes/Files ---
 
   Future<int> createNote({
     required String title,
     required String content,
     String? imagePath,
+    String fileType = 'text', // text, image, pdf, other
     int? folderId,
   }) async {
     final db = await database;
@@ -146,6 +165,7 @@ class AppDatabase {
       'title': title,
       'content': content,
       'image_path': imagePath,
+      'file_type': fileType,
       'folder_id': folderId,
       'created_at': DateTime.now().millisecondsSinceEpoch,
     });
@@ -158,10 +178,20 @@ class AppDatabase {
       {
         'title': note.title,
         'content': note.content,
-        // We typically don't update imagePath or folderId in simple edit, but we can.
+        // file_type generally doesn't change
       },
       where: 'id = ?',
       whereArgs: [note.id],
+    );
+  }
+  
+  Future<int> moveNote(int noteId, int targetFolderId) async {
+    final db = await database;
+    return await db.update(
+      'notes',
+      {'folder_id': targetFolderId},
+      where: 'id = ?',
+      whereArgs: [noteId],
     );
   }
 
