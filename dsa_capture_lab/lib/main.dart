@@ -1,9 +1,11 @@
-import 'package:dsa_capture_lab/camera_screen.dart'; // Add this at the top
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+// IMPORTS: Feature-First structure
+import 'features/dashboard/dashboard_screen.dart';
+
 void main() {
-  // 1. Wrap the app in ProviderScope (Required for Riverpod)
+  // 1. ProviderScope is required for Riverpod to manage state (Database, etc.)
   runApp(const ProviderScope(child: DsaCaptureApp()));
 }
 
@@ -16,56 +18,24 @@ class DsaCaptureApp extends StatelessWidget {
       title: 'DSA Capture Lab',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        // 2. Explicit syntax fixes your "dot-shorthand" error
+        // We are using a custom Gradient Background, so the theme background is less relevant,
+        // but we set it to dark to match the vibe.
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: const Color(0xFF0F2027), // Matches gradient start
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF2196F3), // Tech Blue
-          brightness: Brightness.light,
+          seedColor: const Color(0xFF2196F3), 
+          brightness: Brightness.dark,
         ),
         useMaterial3: true,
-      ),
-      // 3. We point to our Dashboard (which we define below)
-      home: const DashboardScreen(),
-    );
-  }
-}
-
-// --- DASHBOARD SKELETON (We will expand this next) ---
-class DashboardScreen extends ConsumerWidget {
-  const DashboardScreen({super.key});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('DSA Lab Capture'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.camera_alt_outlined, size: 64, color: Colors.grey),
-            const SizedBox(height: 16),
-            const Text(
-              'No captures yet.\nTap the + button to start.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 16, color: Colors.grey),
-            ),
-          ],
+        
+        // Consistent App Bar Theme
+        appBarTheme: const AppBarTheme(
+          centerTitle: true,
+          elevation: 0,
+          backgroundColor: Colors.transparent, 
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-  onPressed: () {
-    // Navigate to the Camera Screen
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => const CameraScreen(),
-      ),
-    );
-  },
-  label: const Text("New Capture"),
-  icon: const Icon(Icons.camera_alt),
-),
+      home: const DashboardScreen(),
     );
   }
 }

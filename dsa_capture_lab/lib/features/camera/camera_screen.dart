@@ -1,14 +1,17 @@
 import 'package:camerawesome/camerawesome_plugin.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:io';
+import '../../core/database/app_database.dart';
 
-class CameraScreen extends StatelessWidget {
-  const CameraScreen({super.key});
+class CameraScreen extends ConsumerWidget {
+  final int? folderId;
+  const CameraScreen({super.key, this.folderId});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Scaffold(
       body: CameraAwesomeBuilder.awesome(
         // 1. Configuration: Photo mode only for now
@@ -39,18 +42,27 @@ class CameraScreen extends StatelessWidget {
         ),
 
         // 4. What happens when a photo is taken?
-        // 4. What happens when a photo is taken?
         onMediaTap: (mediaCapture) {
-          // FIX: Access the path through the captureRequest
           mediaCapture.captureRequest.when(
-            single: (single) {
+            single: (single) async {
               final filePath = single.file?.path;
               if (filePath != null) {
                 print("📸 Capture saved at: $filePath");
                 
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("Saved: ${filePath.split('/').last}")),
+                // Save reference to DB
+                final db = ref.read(dbProvider);
+                await db.createNote(
+                  title: "Snapshot ${DateTime.now().minute}:${DateTime.now().second}",
+                  content: "",
+                  imagePath: filePath,
+                  folderId: folderId,
                 );
+
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("Saved to ${folderId == null ? 'Dashboard' : 'Folder'}")),
+                  );
+                }
               }
             },
             multiple: (multiple) {

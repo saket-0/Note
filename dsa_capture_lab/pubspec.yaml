@@ -11,36 +11,31 @@ dependencies:
     sdk: flutter
 
   # --- State Management ---
-  flutter_riverpod: ^2.6.1
-  riverpod_annotation: ^2.6.1
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
 
-  # --- Database ---
-  isar: 3.1.0+1
-  isar_flutter_libs: 3.1.0+1
-
+  # --- Database (No Code Gen) ---
+  sqflite: ^2.3.0
+  path: ^1.8.3
+  
   # --- Camera & Hardware ---
-  camerawesome: ^2.5.0
-  permission_handler: ^12.0.1
-  path_provider: ^2.1.5
+  camerawesome: ^2.1.0
+  permission_handler: ^11.3.1
+  path_provider: ^2.1.3
 
   # --- Utilities ---
-  intl: ^0.20.2
-  uuid: ^4.5.1
-  cupertino_icons: ^1.0.8
+  intl: ^0.19.0
+  uuid: ^4.4.0
+  cupertino_icons: ^1.0.6
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^4.0.0
+  flutter_lints: ^3.0.2
   
-  # --- Code Generators ---
-  build_runner: ^2.4.13
-  riverpod_generator: ^2.6.3
-  isar_generator: 3.1.0+1
-
-# !!! THIS SECTION FIXES THE CONFLICT !!!
-dependency_overrides:
-  analyzer: ^6.0.0
+  # --- Code Generators (Removed build_runner) ---
+  # Only keeping riverpod_generator if needed, but avoiding running it.
+  # riverpod_generator: ^2.4.0 
 
 flutter:
   uses-material-design: true
