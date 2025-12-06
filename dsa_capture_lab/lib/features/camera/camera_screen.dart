@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:io';
-import '../../core/database/app_database.dart';
+
+import 'controllers/camera_view_model.dart';
+import 'screens/single_preview_screen.dart';
 
 class CameraScreen extends ConsumerStatefulWidget {
   final int? folderId;
@@ -15,185 +17,155 @@ class CameraScreen extends ConsumerStatefulWidget {
 }
 
 class _CameraScreenState extends ConsumerState<CameraScreen> {
-  String? _capturedPath;
+  // Local state for Single Mode preview only
+  String? _singleCapturedPath;
 
   @override
   Widget build(BuildContext context) {
-    if (_capturedPath != null) {
-      return _buildReviewScreen();
+    final cameraState = ref.watch(cameraViewModelProvider);
+    final viewModel = ref.read(cameraViewModelProvider.notifier);
+
+    // If Single Mode has a capture, show Preview
+    if (!cameraState.isBatchMode && _singleCapturedPath != null) {
+      return SinglePreviewScreen(
+        imagePath: _singleCapturedPath!,
+        folderId: widget.folderId,
+        onDiscard: () {
+          try { File(_singleCapturedPath!).delete(); } catch (_) {}
+          setState(() => _singleCapturedPath = null);
+        },
+        onSave: () async {
+          await viewModel.saveSingle(_singleCapturedPath!, widget.folderId);
+          if (context.mounted) Navigator.pop(context);
+        },
+      );
     }
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: CameraAwesomeBuilder.awesome(
-        saveConfig: SaveConfig.photo(
-          pathBuilder: (sensors) async {
-            final Directory extDir = await getApplicationDocumentsDirectory();
-            final String dirPath = '${extDir.path}/dsa_captures';
-            await Directory(dirPath).create(recursive: true);
-            final String filePath = '$dirPath/${const Uuid().v4()}.jpg';
-            return SingleCaptureRequest(filePath, sensors.first);
-          },
-        ),
-        // Custom Top UI
-        topActionsBuilder: (state) => Padding(
-          padding: const EdgeInsets.only(top: 30, left: 20),
-          child: CircleAvatar(
+      body: Stack(
+        children: [
+          // CAMERA
+          CameraAwesomeBuilder.awesome(
+            saveConfig: SaveConfig.photo(
+              pathBuilder: (sensors) async {
+                final Directory extDir = await getApplicationDocumentsDirectory();
+                final String dirPath = '${extDir.path}/dsa_captures';
+                await Directory(dirPath).create(recursive: true);
+                final String filePath = '$dirPath/${const Uuid().v4()}.jpg';
+                return SingleCaptureRequest(filePath, sensors.first);
+              },
+            ),
+            // HIDE DEFAULT UI ELEMENTS IF NEEDED or USE THEM
+            // We use 'awesome' but we need to overlay controls.
+            // Actually 'awesome' gives us the shutter. We just need to handle top/bottom overlays.
+            
+            topActionsBuilder: (state) => _buildTopBar(cameraState, viewModel),
+            
+            // On Capture
+            onMediaCaptureEvent: (event) {
+               if (event.status == MediaCaptureStatus.success) {
+                 event.captureRequest.when(
+                   single: (single) {
+                     final path = single.file?.path;
+                     if (path != null) {
+                       if (cameraState.isBatchMode) {
+                         // Batch: Add to list, no preview
+                         viewModel.addPhoto(path);
+                       } else {
+                         // Single: Show Preview
+                         setState(() => _singleCapturedPath = path);
+                       }
+                     }
+                   },
+                   multiple: (_) {},
+                 );
+               }
+            },
+          ),
+
+          // BATCH COUNTER & DONE BUTTON (Overlay)
+          if (cameraState.isBatchMode && cameraState.capturedPaths.isNotEmpty)
+            Positioned(
+              bottom: 120, // Above shutter area usually
+              left: 20,
+              right: 20,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Counter Badge
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.black54, 
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.white24)
+                    ),
+                    child: Text(
+                      "${cameraState.capturedPaths.length} Photos",
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+
+                  // Done Button
+                  FloatingActionButton.extended(
+                    heroTag: "batch_done",
+                    onPressed: () async {
+                      await viewModel.saveBatch(widget.folderId);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Batch Saved!")));
+                        Navigator.pop(context);
+                      }
+                    },
+                    label: const Text("Done"),
+                    icon: const Icon(Icons.check),
+                    backgroundColor: Colors.teal,
+                  )
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTopBar(BatchCameraState state, CameraViewModel viewModel) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Back
+          CircleAvatar(
             backgroundColor: Colors.black45,
             child: IconButton(
               icon: const Icon(Icons.arrow_back, color: Colors.white),
               onPressed: () => Navigator.pop(context),
             ),
           ),
-        ),
-        // Intercept Capture Event
-        onMediaCaptureEvent: (event) {
-           if (event.status == MediaCaptureStatus.success) {
-             event.captureRequest.when(
-               single: (single) {
-                 if (single.file?.path != null) {
-                   setState(() {
-                     _capturedPath = single.file!.path;
-                   });
-                 }
-               },
-               multiple: (_) {},
-             );
-           }
-        },
+
+          // Mode Toggle
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.black45,
+              borderRadius: BorderRadius.circular(20)
+            ),
+            child: Row(
+              children: [
+                const Text("Quick", style: TextStyle(color: Colors.white, fontSize: 12)),
+                Switch(
+                  value: state.isBatchMode,
+                  onChanged: (val) => viewModel.toggleMode(val),
+                  activeColor: Colors.amber,
+                  activeTrackColor: Colors.amber.withOpacity(0.3),
+                ),
+                Text("Batch", style: TextStyle(color: state.isBatchMode ? Colors.amber : Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+              ],
+            ),
+          )
+        ],
       ),
     );
-  }
-
-  Widget _buildReviewScreen() {
-    return PopScope(
-      canPop: false,
-      onPopInvoked: (didPop) async {
-        if (didPop) return;
-        // Back Button = Auto Save
-        await _saveAndClose();
-      },
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: Stack(
-          children: [
-            // 1. Image Preview
-            Positioned.fill(
-              child: Image.file(
-                File(_capturedPath!),
-                fit: BoxFit.cover,
-              ),
-            ),
-            
-            // 2. Overlay Gradient for Controls
-            Positioned(
-              bottom: 0, left: 0, right: 0,
-              child: Container(
-                height: 150,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [Colors.transparent, Colors.black87],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ),
-                ),
-              ),
-            ),
-
-            // 3. Top Controls (Back = Save)
-            Positioned(
-              top: 40,
-              left: 20,
-              child: CircleAvatar(
-                backgroundColor: Colors.black45,
-                child: IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
-                  onPressed: () => _saveAndClose(), // Auto-save
-                ),
-              ),
-            ),
-
-            // 4. Bottom Controls (Discard / Done)
-            Positioned(
-              bottom: 40,
-              left: 40,
-              right: 40,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // Discard Button
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      FloatingActionButton(
-                        heroTag: "discard_btn",
-                        backgroundColor: Colors.redAccent,
-                        onPressed: _discardAndRetry,
-                        child: const Icon(Icons.delete_outline, color: Colors.white),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text("Discard", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
-                    ],
-                  ),
-
-                  // Done Button
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      FloatingActionButton(
-                        heroTag: "save_btn",
-                        backgroundColor: Colors.tealAccent,
-                        foregroundColor: Colors.black,
-                        onPressed: _saveAndClose,
-                        child: const Icon(Icons.check, size: 30),
-                      ),
-                      const SizedBox(height: 8),
-                      const Text("Done", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
-                    ],
-                  ),
-                ],
-              ),
-            )
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _discardAndRetry() async {
-    if (_capturedPath != null) {
-      try {
-        await File(_capturedPath!).delete();
-      } catch (e) {
-        print("Error deleting discarded file: $e");
-      }
-    }
-    setState(() {
-      _capturedPath = null; // Return to camera
-    });
-  }
-
-  Future<void> _saveAndClose() async {
-    if (_capturedPath == null) return;
-    
-    final db = ref.read(dbProvider);
-    await db.createNote(
-      title: "Snapshot ${DateTime.now().minute}:${DateTime.now().second}",
-      content: "",
-      imagePath: _capturedPath,
-      folderId: widget.folderId,
-      fileType: 'image'
-    );
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Saved to ${widget.folderId == null ? 'Dashboard' : 'Folder'}"),
-          backgroundColor: Colors.teal,
-          duration: const Duration(seconds: 1),
-        ),
-      );
-      Navigator.pop(context); // Close Camera Screen
-    }
   }
 }
