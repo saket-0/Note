@@ -7,6 +7,7 @@ class DashboardGridItem extends StatefulWidget {
   final List<dynamic> allItems;
   final Function(String key, String zone) onDrop;
   final VoidCallback onTap;
+  final VoidCallback onDelete; // Added
 
   const DashboardGridItem({
     super.key,
@@ -14,6 +15,7 @@ class DashboardGridItem extends StatefulWidget {
     required this.allItems,
     required this.onDrop,
     required this.onTap,
+    required this.onDelete,
   });
 
   @override
@@ -239,6 +241,35 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
               Icons.push_pin, 
               size: 16, 
               color: (item.color != 0) ? Colors.black54 : Colors.white70
+            ),
+          ),
+
+        // DELETE MENU (Show only if not dragging feedback)
+        if (!isFeedback)
+        Positioned(
+            bottom: 4,
+            right: 4,
+            child: PopupMenuButton<String>(
+              icon: Icon(
+                Icons.more_vert, 
+                size: 20, 
+                color: (item is Note && item.color != 0) ? Colors.black54 : Colors.white70
+              ),
+              onSelected: (value) {
+                if (value == 'delete') widget.onDelete();
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'delete',
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text("Delete"),
+                    ],
+                  ),
+                ),
+              ],
             ),
           )
       ],

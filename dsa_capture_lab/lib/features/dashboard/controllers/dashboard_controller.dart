@@ -35,21 +35,37 @@ class DashboardController {
 
     if (incomingObj == null) return;
 
+    print("DEBUG: handleDrop zone=$zone incoming=$incomingKey target=${targetItem.runtimeType}(${targetItem.id})");
+
     if (zone == 'merge') {
       // MERGE LOGIC
-      if (incomingObj == targetItem) return; // Drop on self
+      // Check ID equality manually to be safe across instances
+      bool isSelf = false;
+      if (incomingObj is Folder && targetItem is Folder) isSelf = incomingObj.id == targetItem.id;
+      if (incomingObj is Note && targetItem is Note) isSelf = incomingObj.id == targetItem.id;
+      
+      if (isSelf) {
+        print("DEBUG: Dropped on self (merge)");
+        return; 
+      }
 
       if (targetItem is Folder) {
+        print("DEBUG: Target is Folder");
         // Move into Folder
         if (incomingObj is Note) {
+           print("DEBUG: Moving Note to Folder");
            await db.moveNote(incomingObj.id, targetItem.id);
         } else if (incomingObj is Folder) {
            // Move folder into folder
         }
       } else if (targetItem is Note) {
+        print("DEBUG: Target is Note");
         // File on File -> Group
         if (incomingObj is Note) {
+          print("DEBUG: Merging Note into Note -> Group");
           await _mergeItemsIntoFolder(incomingObj.id, targetItem);
+        } else {
+           print("DEBUG: Incoming is not Note (it is ${incomingObj.runtimeType})");
         }
       }
     } else {
@@ -195,5 +211,41 @@ class DashboardController {
         ],
       ),
     );
+  }
+  Future<void> deleteItem(dynamic item) async {
+    final bool isFolder = item is Folder;
+    final String title = isFolder ? "Delete Folder?" : "Delete Note?";
+    final String content = isFolder 
+        ? "This will delete the folder '${item.name}' and all its contents.\nThis action cannot be undone." 
+        : "Are you sure you want to delete '${item.title}'?";
+
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(content),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false), 
+            child: const Text("Cancel")
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true), 
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text("Delete"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      final db = ref.read(dbProvider);
+      if (isFolder) {
+        await db.deleteFolder(item.id);
+      } else if (item is Note) {
+        await db.deleteNote(item.id);
+      }
+      ref.read(refreshTriggerProvider.notifier).state++;
+    }
   }
 }

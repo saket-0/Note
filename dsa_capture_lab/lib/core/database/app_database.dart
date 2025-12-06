@@ -211,6 +211,11 @@ class AppDatabase {
     await db.update('folders', {'position': newPosition}, where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<int> deleteFolder(int id) async {
+    final db = await database;
+    return await db.delete('folders', where: 'id = ?', whereArgs: [id]);
+  }
+
   // --- CRUD for Notes/Files ---
 
   Future<int> createNote({

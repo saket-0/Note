@@ -82,6 +82,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                            controller.openFile(item);
                          }
                       },
+                      onDelete: () => controller.deleteItem(item),
                     );
                   },
                 );
