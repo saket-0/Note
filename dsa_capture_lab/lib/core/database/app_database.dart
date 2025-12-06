@@ -144,7 +144,9 @@ class AppDatabase {
       },
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
-        // Auto-migrations
+      },
+      onOpen: (db) async {
+        // Auto-migrations (Moved to onOpen to ensure tables exist)
         try { await db.query('notes', columns: ['file_type'], limit: 1); } 
         catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN file_type TEXT DEFAULT \'text\''); }
 
@@ -154,7 +156,6 @@ class AppDatabase {
         try { await db.query('notes', columns: ['position'], limit: 1); } 
         catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN position INTEGER DEFAULT 0'); }
 
-        // New Keep Features: Color & Pinned
         try { await db.query('notes', columns: ['color'], limit: 1); } 
         catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN color INTEGER DEFAULT 0'); }
 
