@@ -38,9 +38,19 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: currentFolderId != null 
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back_ios_new),
-                onPressed: () => controller.navigateUp(currentFolderId),
+            ? DragTarget<String>(
+                onAccept: (key) => controller.moveItemToParent(key),
+                builder: (context, candidates, rejects) {
+                  final isHovering = candidates.isNotEmpty;
+                  return IconButton(
+                    icon: Icon(
+                      Icons.arrow_back_ios_new,
+                      color: isHovering ? Colors.tealAccent : Colors.white, // Visual Feedback
+                      size: isHovering ? 30 : 24, // Scale effect
+                    ),
+                    onPressed: () => controller.navigateUp(currentFolderId),
+                  );
+                },
               )
             : null,
       ),

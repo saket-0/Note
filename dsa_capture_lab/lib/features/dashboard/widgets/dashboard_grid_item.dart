@@ -149,17 +149,21 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
     Widget contentBody;
     
     if (item is Folder) {
-      contentBody = Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.folder_open, color: Colors.blueAccent, size: 40),
-          const SizedBox(height: 8),
-          Text(
-            item.name, 
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
+      contentBody = Padding(
+        padding: const EdgeInsets.symmetric(vertical: 30.0, horizontal: 16.0), // Added Height
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.folder_open, color: Colors.blueAccent, size: 40),
+            const SizedBox(height: 8),
+            Text(
+              item.name, 
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
       );
     } else { // Note
        if (item.fileType == 'image' && item.imagePath != null) {
@@ -189,33 +193,33 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
                crossAxisAlignment: CrossAxisAlignment.start,
                mainAxisSize: MainAxisSize.min, // Wrap content
                children: [
-                 if (item.imagePath == null) ...[
-                    // Title
-                    Text(
-                      item.title,
-                      style: TextStyle(
-                        color: (item.color != 0) ? Colors.black87 : Colors.white, 
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
+                   if (item.imagePath == null) ...[
+                      // Title
+                      Text(
+                        item.title,
+                        style: TextStyle(
+                          color: (item.color != 0) ? Colors.black87 : Colors.white, 
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                        maxLines: isFeedback ? 1 : 2, // Compact for drag feedback
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 8),
-                    // Content snippet
-                    Text(
-                      previewText,
-                      style: TextStyle(
-                         color: (item.color != 0) ? Colors.black54 : Colors.white70,
-                         fontSize: 14,
+                      const SizedBox(height: 8),
+                      // Content snippet
+                      Text(
+                        previewText,
+                        style: TextStyle(
+                           color: (item.color != 0) ? Colors.black54 : Colors.white70,
+                           fontSize: 14,
+                        ),
+                        maxLines: isFeedback ? 2 : 6, // Compact for drag feedback
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 6,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                 ] 
-               ],
-             ),
-           );
+                   ] 
+                 ],
+               ),
+             );
        }
     }
     

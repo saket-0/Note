@@ -248,4 +248,36 @@ class DashboardController {
       ref.read(refreshTriggerProvider.notifier).state++;
     }
   }
+  Future<void> moveItemToParent(String incomingKey) async {
+    final db = ref.read(dbProvider);
+    final currentFolderId = ref.read(currentFolderProvider);
+    
+    // Check if we are actually inside a folder
+    if (currentFolderId == null) return;
+    
+    // Get parent logic
+    final currentFolderObj = await db.getFolder(currentFolderId);
+    final targetParentId = currentFolderObj?.parentId;
+
+    // Parse Key
+    final parts = incomingKey.split('_');
+    final type = parts[0];
+    final id = int.parse(parts[1]);
+
+    // Update parent_id / folder_id
+    await db.database.then((d) => d.update(
+      type == 'folder' ? 'folders' : 'notes', 
+      { type == 'folder' ? 'parent_id' : 'folder_id': targetParentId },
+      where: 'id = ?',
+      whereArgs: [id]
+    ));
+    
+    ref.read(refreshTriggerProvider.notifier).state++;
+    
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Moved to parent folder")),
+      );
+    }
+  }
 }
