@@ -6,14 +6,24 @@ import '../../../core/database/app_database.dart';
 // State Class
 class BatchCameraState {
   final bool isBatchMode;
-  final List<String> capturedPaths;
+  final List<Note> capturedItems; // Changed to Note objects
+  final int? activeBatchFolderId; // To track current session
 
-  BatchCameraState({required this.isBatchMode, required this.capturedPaths});
+  BatchCameraState({
+    required this.isBatchMode, 
+    required this.capturedItems,
+    this.activeBatchFolderId,
+  });
 
-  BatchCameraState copyWith({bool? isBatchMode, List<String>? capturedPaths}) {
+  BatchCameraState copyWith({
+    bool? isBatchMode, 
+    List<Note>? capturedItems,
+    int? activeBatchFolderId,
+  }) {
     return BatchCameraState(
       isBatchMode: isBatchMode ?? this.isBatchMode,
-      capturedPaths: capturedPaths ?? this.capturedPaths,
+      capturedItems: capturedItems ?? this.capturedItems,
+      activeBatchFolderId: activeBatchFolderId ?? this.activeBatchFolderId,
     );
   }
 }
@@ -27,58 +37,66 @@ final cameraViewModelProvider = StateNotifierProvider.autoDispose<CameraViewMode
 class CameraViewModel extends StateNotifier<BatchCameraState> {
   final Ref ref;
 
-  CameraViewModel(this.ref) : super(BatchCameraState(isBatchMode: false, capturedPaths: []));
+  CameraViewModel(this.ref) : super(BatchCameraState(isBatchMode: false, capturedItems: []));
 
   void toggleMode(bool isBatch) {
     state = state.copyWith(isBatchMode: isBatch);
-    // If switching OFF batch mode, we technically clear the queue? 
-    // Or we keep it until 'discard' or 'save' is pressed. 
-    // Let's keep it safe: Don't clear automatically to avoid data loss.
+    // Persist session across toggles? For now, we keep it.
   }
 
-  void addPhoto(String path) {
-    state = state.copyWith(capturedPaths: [...state.capturedPaths, path]);
-  }
-
-  void removePhoto(String path) {
-    final newList = List<String>.from(state.capturedPaths)..remove(path);
-    state = state.copyWith(capturedPaths: newList);
-    // Also delete file
-    try { File(path).delete(); } catch (_) {} 
-  }
-
-  void clearBatch() {
-    // Delete all temporary files if they weren't saved?
-    // This method assumes Discard All.
-    for (var path in state.capturedPaths) {
-      try { File(path).delete(); } catch (_) {}
-    }
-    state = state.copyWith(capturedPaths: []);
-  }
-
-  Future<void> saveBatch(int? currentFolderId) async {
-    if (state.capturedPaths.isEmpty) return;
-
+  // Instant Batch Save
+  Future<void> captureBatchPhoto(String path, int? parentFolderId) async {
     final db = ref.read(dbProvider);
     
-    // 1. Create Folder
-    final String folderName = "Capture ${DateTime.now().toString().substring(0, 16)}"; // e.g., "Capture 2023-10-27 10:30"
-    final int newFolderId = await db.createFolder(folderName, currentFolderId);
-
-    // 2. Save All Photos into this folder
-    for (var path in state.capturedPaths) {
-      await db.createNote(
-        title: "Img ${DateTime.now().millisecondsSinceEpoch}", 
-        content: "", 
-        imagePath: path,
-        folderId: newFolderId,
-        fileType: 'image'
-      );
+    // 1. Ensure Batch Folder Exists
+    int folderId;
+    if (state.activeBatchFolderId == null) {
+      final String folderName = "Batch ${DateTime.now().hour}:${DateTime.now().minute}"; 
+      folderId = await db.createFolder(folderName, parentFolderId);
+      state = state.copyWith(activeBatchFolderId: folderId);
+    } else {
+      folderId = state.activeBatchFolderId!;
     }
 
-    // 3. Clear State
-    state = state.copyWith(capturedPaths: []);
+    // 2. Save Photo Immediately
+    final int noteId = await db.createNote(
+      title: "Img ${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}", 
+      content: "", 
+      imagePath: path,
+      folderId: folderId,
+      fileType: 'image'
+    );
+    
+    // 3. Create Note Object for Local State (Optimistic/Confirmed)
+    final newNote = Note(
+      id: noteId, 
+      title: "Img...", 
+      content: "", 
+      imagePath: path, 
+      folderId: folderId, 
+      createdAt: DateTime.now(), 
+      fileType: 'image'
+    );
+
+    state = state.copyWith(capturedItems: [...state.capturedItems, newNote]);
     ref.read(refreshTriggerProvider.notifier).state++;
+  }
+
+  Future<void> deleteBatchPhoto(Note note) async {
+    final db = ref.read(dbProvider);
+    await db.deleteNote(note.id);
+    
+    final newList = List<Note>.from(state.capturedItems)..removeWhere((n) => n.id == note.id);
+    state = state.copyWith(capturedItems: newList);
+    
+    // If empty, maybe delete the folder? 
+    // User requirement: "do not loose data". 
+    // We keep the folder even if empty for now, or let user delete it from dashboard.
+    ref.read(refreshTriggerProvider.notifier).state++;
+  }
+
+  void endBatchSession() {
+    state = state.copyWith(capturedItems: [], activeBatchFolderId: null);
   }
   
   // Single Save helper (Returns Note ID)

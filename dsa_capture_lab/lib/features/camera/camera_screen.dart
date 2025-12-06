@@ -74,11 +74,10 @@ class _CameraScreenState extends ConsumerState<CameraScreen> {
                      final path = single.file?.path;
                      if (path != null) {
                        if (cameraState.isBatchMode) {
-                         // Batch: Add to list, no preview
-                         viewModel.addPhoto(path);
+                         // Batch: INSTANT SAVE
+                         await viewModel.captureBatchPhoto(path, widget.folderId);
                        } else {
                          // Single: INSTANT SAVE & Show Preview
-                         // We save first to ensure persistence
                          final id = await viewModel.saveSingle(path, widget.folderId);
                          if (mounted) {
                            setState(() {
@@ -95,49 +94,108 @@ class _CameraScreenState extends ConsumerState<CameraScreen> {
             },
           ),
 
-          // BATCH COUNTER & DONE BUTTON (Overlay)
-          if (cameraState.isBatchMode && cameraState.capturedPaths.isNotEmpty)
+          // BATCH UI: Thumbnail Strip & Done
+          if (cameraState.isBatchMode && cameraState.capturedItems.isNotEmpty)
             Positioned(
-              bottom: 120, // Above shutter area usually
-              left: 20,
-              right: 20,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              bottom: 120, 
+              left: 0,
+              right: 0,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  // Counter Badge
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    decoration: BoxDecoration(
-                      color: Colors.black54, 
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.white24)
-                    ),
-                    child: Text(
-                      "${cameraState.capturedPaths.length} Photos",
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  // DONE BUTTON
+                  Padding(
+                    padding: const EdgeInsets.only(right: 20, bottom: 10),
+                    child: FloatingActionButton.extended(
+                      heroTag: "batch_done",
+                      onPressed: () {
+                         // Just finish the session, data is already saved
+                         viewModel.endBatchSession();
+                         Navigator.pop(context);
+                      },
+                      label: Text("Finish (${cameraState.capturedItems.length})"),
+                      icon: const Icon(Icons.check),
+                      backgroundColor: Colors.teal,
                     ),
                   ),
-
-                  // Done Button
-                  FloatingActionButton.extended(
-                    heroTag: "batch_done",
-                    onPressed: () async {
-                      await viewModel.saveBatch(widget.folderId);
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Batch Saved!")));
-                        Navigator.pop(context);
-                      }
-                    },
-                    label: const Text("Done"),
-                    icon: const Icon(Icons.check),
-                    backgroundColor: Colors.teal,
-                  )
+                  
+                  // THUMBNAIL STRIP
+                  SizedBox(
+                    height: 80,
+                    child: ListView.builder(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: cameraState.capturedItems.length,
+                      itemBuilder: (context, index) {
+                        final note = cameraState.capturedItems[cameraState.capturedItems.length - 1 - index]; // Show newest first
+                        return GestureDetector(
+                          onTap: () => _showBatchItemPreview(context, note, viewModel),
+                          child: Container(
+                            margin: const EdgeInsets.only(right: 12),
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.white, width: 2),
+                              image: DecorationImage(
+                                image: FileImage(File(note.imagePath!)),
+                                fit: BoxFit.cover
+                              ),
+                            ),
+                            child: const Icon(Icons.zoom_in, color: Colors.white54),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
                 ],
               ),
             ),
         ],
       ),
     );
+  }
+
+  void _showBatchItemPreview(BuildContext context, dynamic note, CameraViewModel viewModel) {
+     showDialog(
+       context: context, 
+       builder: (ctx) => Dialog(
+         backgroundColor: Colors.transparent,
+         insetPadding: const EdgeInsets.all(20),
+         child: Stack(
+           clipBehavior: Clip.none,
+           alignment: Alignment.center,
+           children: [
+             ClipRRect(
+               borderRadius: BorderRadius.circular(20),
+               child: Image.file(File(note.imagePath!), fit: BoxFit.contain),
+             ),
+             Positioned(
+               bottom: -30,
+               child: FloatingActionButton(
+                 backgroundColor: Colors.red,
+                 onPressed: () async {
+                   await viewModel.deleteBatchPhoto(note);
+                   if (ctx.mounted) Navigator.pop(ctx);
+                 },
+                 child: const Icon(Icons.delete, color: Colors.white),
+               ),
+             ),
+             Positioned(
+               top: -10,
+               right: -10,
+               child: CircleAvatar(
+                 backgroundColor: Colors.white,
+                 child: IconButton(
+                   icon: const Icon(Icons.close, color: Colors.black),
+                   onPressed: () => Navigator.pop(ctx),
+                 ),
+               ),
+             )
+           ],
+         ),
+       )
+     );
   }
 
   Widget _buildTopBar(BatchCameraState state, CameraViewModel viewModel) {
