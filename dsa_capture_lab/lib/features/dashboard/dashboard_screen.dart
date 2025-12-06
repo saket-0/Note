@@ -1,8 +1,10 @@
+import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:mime/mime.dart';
+import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import '../../core/database/app_database.dart';
 import '../../core/ui/gradient_background.dart';
 import '../../core/ui/glass_container.dart';
@@ -36,11 +38,22 @@ final currentFolderObjProvider = FutureProvider.autoDispose<Folder?>((ref) async
   return await db.getFolder(id);
 });
 
-class DashboardScreen extends ConsumerWidget {
+class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends ConsumerState<DashboardScreen> {
+  // Map to track hover state per item: 'merge', 'left', 'right', or null
+  // We don't actually need this in parent if GridItem handles it?
+  // Actually we rely on GridItem to tell us when to rebuild parent or just logic helper.
+  // The GridItem handles its own hover state for visual feedback.
+  // The Parent handles the DROP logic.
+
+  @override
+  Widget build(BuildContext context) {
     final currentFolderId = ref.watch(currentFolderProvider);
     final folderInfo = ref.watch(currentFolderObjProvider);
     final contentAsync = ref.watch(contentProvider);
@@ -79,64 +92,28 @@ class DashboardScreen extends ConsumerWidget {
                     ),
                   );
                 }
-                return GridView.builder(
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    childAspectRatio: 1.3,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
-                  ),
+                
+                // MASONRY GRID (Keep Style)
+                return MasonryGridView.count(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
                   itemCount: items.length,
                   itemBuilder: (context, index) {
                     final item = items[index];
-                    
-                    if (item is Folder) {
-                      return DragTarget<int>(
-                        onAccept: (noteId) {
-                          _moveNoteToFolder(ref, noteId, item.id);
-                        },
-                        builder: (context, candidates, rejects) {
-                          return GestureDetector(
-                            onTap: () => ref.read(currentFolderProvider.notifier).state = item.id,
-                            child: GlassContainer(
-                              color: candidates.isNotEmpty 
-                                  ? Colors.greenAccent.withOpacity(0.3) 
-                                  : Colors.blueAccent.withOpacity(0.1),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const Icon(Icons.folder, color: Colors.blueAccent, size: 40),
-                                  const SizedBox(height: 8),
-                                  Text(
-                                    item.name, 
-                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      );
-                    } else if (item is Note) {
-                      // Draggable File Item
-                      return LongPressDraggable<int>(
-                        data: item.id,
-                        feedback: Material(
-                          color: Colors.transparent,
-                          child: Opacity(
-                            opacity: 0.7,
-                            child: _buildFileItem(context, ref, item, isFeedback: true),
-                          ),
-                        ),
-                        childWhenDragging: Opacity(
-                          opacity: 0.3,
-                          child: _buildFileItem(context, ref, item),
-                        ),
-                        child: _buildFileItem(context, ref, item),
-                      );
-                    }
-                    return const SizedBox.shrink();
+                    return DashboardGridItem(
+                      key: ValueKey(item.id),
+                      item: item,
+                      allItems: items,
+                      onDrop: (incomingKey, zone) => _handleDrop(ref, incomingKey, item, zone, items),
+                      onTap: () {
+                         if (item is Folder) {
+                           ref.read(currentFolderProvider.notifier).state = item.id;
+                         } else if (item is Note) {
+                           _openFile(context, ref, item);
+                         }
+                      },
+                    );
                   },
                 );
               },
@@ -165,7 +142,7 @@ class DashboardScreen extends ConsumerWidget {
           const SizedBox(height: 16),
           FloatingActionButton(
             heroTag: "camera_btn",
-            backgroundColor: Colors.purpleAccent,
+            backgroundColor: Colors.deepPurple,
             onPressed: () async { 
                await Navigator.push(
                 context, 
@@ -178,7 +155,7 @@ class DashboardScreen extends ConsumerWidget {
           const SizedBox(height: 16),
           FloatingActionButton(
             heroTag: "note_btn",
-            backgroundColor: Colors.orangeAccent,
+            backgroundColor: Colors.amber[800],
             onPressed: () async {
               await Navigator.push(
                 context, 
@@ -193,54 +170,71 @@ class DashboardScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildFileItem(BuildContext context, WidgetRef ref, Note note, {bool isFeedback = false}) {
-    IconData icon;
-    Color color;
-
-    switch (note.fileType) {
-      case 'image':
-        icon = Icons.image;
-        color = Colors.purpleAccent;
-        break;
-      case 'pdf':
-        icon = Icons.picture_as_pdf;
-        color = Colors.redAccent;
-        break;
-      case 'text':
-        icon = Icons.description;
-        color = Colors.orangeAccent;
-        break;
-      default:
-        icon = Icons.insert_drive_file;
-        color = Colors.grey;
+  Future<void> _handleDrop(WidgetRef ref, String incomingKey, dynamic targetItem, String zone, List<dynamic> allItems) async {
+    final db = ref.read(dbProvider);
+    
+    // Parse Key: "folder_123" -> Type=Folder, ID=123
+    final parts = incomingKey.split('_');
+    final type = parts[0];
+    final id = int.parse(parts[1]);
+    
+    // Find Strategy
+    dynamic incomingObj;
+    if (type == 'folder') {
+      incomingObj = allItems.firstWhere((e) => e is Folder && e.id == id, orElse: () => null);
+    } else {
+      incomingObj = allItems.firstWhere((e) => e is Note && e.id == id, orElse: () => null);
     }
 
-    return GestureDetector(
-      onTap: () => _openFile(context, ref, note),
-      child: GlassContainer(
-        width: isFeedback ? 150 : null, // Fixed width for feedback
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.2),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, color: color, size: 30),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              note.title, 
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
+    if (incomingObj == null) return;
+
+    if (zone == 'merge') {
+      // MERGE LOGIC
+      if (incomingObj == targetItem) return; // Drop on self
+
+      if (targetItem is Folder) {
+        // Move into Folder
+        if (incomingObj is Note) {
+           await db.moveNote(incomingObj.id, targetItem.id);
+        } else if (incomingObj is Folder) {
+           // Move folder into folder
+        }
+      } else if (targetItem is Note) {
+        // File on File -> Group
+        if (incomingObj is Note) {
+          _mergeItemsIntoFolder(context, ref, incomingObj.id, targetItem);
+        }
+      }
+    } else {
+      // REORDER LOGIC
+      int oldIndex = allItems.indexOf(incomingObj);
+      int newIndex = allItems.indexOf(targetItem);
+      if (oldIndex == -1 || newIndex == -1) return; // safety
+      
+      if (zone == 'right') newIndex++; 
+
+      final sortedList = List.from(allItems);
+      sortedList.removeAt(oldIndex);
+      
+      if (newIndex > oldIndex) newIndex--; 
+      
+      if (newIndex < 0) newIndex = 0;
+      if (newIndex > sortedList.length) newIndex = sortedList.length;
+      
+      sortedList.insert(newIndex, incomingObj);
+      
+      // Update DB
+      for (int i = 0; i < sortedList.length; i++) {
+        final obj = sortedList[i];
+        if (obj is Folder) {
+          await db.updateFolderPosition(obj.id, i);
+        } else if (obj is Note) {
+          await db.updateNotePosition(obj.id, i);
+        }
+      }
+    }
+    
+    ref.read(refreshTriggerProvider.notifier).state++;
   }
 
   Future<void> _openFile(BuildContext context, WidgetRef ref, Note note) async {
@@ -301,6 +295,26 @@ class DashboardScreen extends ConsumerWidget {
     ref.read(refreshTriggerProvider.notifier).state++;
   }
 
+  Future<void> _mergeItemsIntoFolder(BuildContext context, WidgetRef ref, int incomingNoteId, Note targetNote) async {
+    // 1. Create a new folder named "Group"
+    final db = ref.read(dbProvider);
+    final currentId = ref.read(currentFolderProvider);
+    final newFolderId = await db.createFolder("Group", currentId);
+
+    // 2. Move BOTH items into the new folder
+    await db.moveNote(incomingNoteId, newFolderId); // dragged item
+    await db.moveNote(targetNote.id, newFolderId);  // target item
+    
+    // 3. Refresh UI
+    ref.read(refreshTriggerProvider.notifier).state++;
+    
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Group created!")),
+      );
+    }
+  }
+
   void _navigateUp(BuildContext context, WidgetRef ref, int currentId) async {
     final db = ref.read(dbProvider);
     final currentFolder = await db.getFolder(currentId);
@@ -339,6 +353,226 @@ class DashboardScreen extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class DashboardGridItem extends StatefulWidget {
+  final dynamic item;
+  final List<dynamic> allItems;
+  final Function(String key, String zone) onDrop;
+  final VoidCallback onTap;
+
+  const DashboardGridItem({
+    super.key,
+    required this.item,
+    required this.allItems,
+    required this.onDrop,
+    required this.onTap,
+  });
+
+  @override
+  State<DashboardGridItem> createState() => _DashboardGridItemState();
+}
+
+class _DashboardGridItemState extends State<DashboardGridItem> {
+  String _hoverState = 'merge'; 
+
+  @override
+  Widget build(BuildContext context) {
+    final int itemId = widget.item.id;
+    final bool isFolder = widget.item is Folder;
+    final String dragKey = isFolder ? "folder_$itemId" : "note_$itemId";
+
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: DragTarget<String>(
+            onMove: (details) {
+              final RenderBox box = context.findRenderObject() as RenderBox;
+              final localPos = box.globalToLocal(details.offset);
+              final width = box.size.width;
+              
+              String newState = 'merge';
+              if (localPos.dx < width * 0.25) {
+                newState = 'left';
+              } else if (localPos.dx > width * 0.75) {
+                newState = 'right';
+              } else {
+                newState = 'merge';
+              }
+
+              if (_hoverState != newState) {
+                setState(() => _hoverState = newState);
+              }
+            },
+            onLeave: (_) {},
+            onAccept: (incomingKey) => widget.onDrop(incomingKey, _hoverState),
+            builder: (context, candidates, rejects) {
+              if (candidates.isEmpty) return const SizedBox.shrink();
+              return Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  border: _hoverState == 'merge' 
+                      ? Border.all(color: Colors.tealAccent, width: 3) 
+                      : null,
+                ),
+                child: Stack(
+                  children: [
+                     if (_hoverState == 'left')
+                       Positioned(left: 0, top: 0, bottom: 0, width: 6, child: Container(
+                         decoration: BoxDecoration(color: Colors.orangeAccent, borderRadius: BorderRadius.circular(3))
+                       )),
+                     if (_hoverState == 'right')
+                       Positioned(right: 0, top: 0, bottom: 0, width: 6, child: Container(
+                         decoration: BoxDecoration(color: Colors.orangeAccent, borderRadius: BorderRadius.circular(3))
+                       )),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+
+        LongPressDraggable<String>(
+          data: dragKey,
+          delay: const Duration(milliseconds: 300),
+          feedback: Material(
+            color: Colors.transparent,
+            child: Opacity(
+              opacity: 0.8,
+              child: SizedBox(
+                width: 140, 
+                height: 140, // Feedback can be fixed size
+                child: _buildContent(isFeedback: true),
+              ),
+            ),
+          ),
+          childWhenDragging: Opacity(
+            opacity: 0.3,
+            child: _buildContent(), // Keep size consistent
+          ),
+          child: GestureDetector(
+            onTap: widget.onTap,
+            child: _buildContent(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildContent({bool isFeedback = false}) {
+    final item = widget.item;
+    
+    // Determine Color
+    Color bgColor = Colors.white.withOpacity(0.05); // Default Glass
+    if (item is Note && item.color != 0) {
+      bgColor = Color(item.color); // Opaque custom color
+    } else if (item is Folder) {
+      bgColor = Colors.blueAccent.withOpacity(0.1);
+    }
+
+    Widget contentBody;
+    
+    if (item is Folder) {
+      contentBody = Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.folder_open, color: Colors.blueAccent, size: 40),
+          const SizedBox(height: 8),
+          Text(
+            item.name, 
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      );
+    } else { // Note
+       if (item.fileType == 'image' && item.imagePath != null) {
+          contentBody = ClipRRect(
+            borderRadius: BorderRadius.circular(15),
+            child: Image.file(
+              File(item.imagePath!),
+              fit: BoxFit.cover, 
+            ),
+          );
+       } else {
+          // Text / Other
+          IconData icon = Icons.insert_drive_file;
+          Color accentColor = Colors.blueGrey;
+          
+           if (item.fileType == 'pdf') {
+             icon = Icons.picture_as_pdf;
+             accentColor = Colors.redAccent;
+           } else if (item.fileType == 'text') {
+             icon = Icons.description;
+             accentColor = Colors.amber;
+           }
+           
+           // Text Content Preview (Keep Style)
+           String previewText = item.content.trim();
+           if (previewText.isEmpty) previewText = "No content";
+
+           contentBody = Padding(
+             padding: const EdgeInsets.all(12.0),
+             child: Column(
+               crossAxisAlignment: CrossAxisAlignment.start,
+               mainAxisSize: MainAxisSize.min, // Wrap content
+               children: [
+                 if (item.imagePath == null) ...[
+                    // Title
+                    Text(
+                      item.title,
+                      style: TextStyle(
+                        color: (item.color != 0) ? Colors.black87 : Colors.white, 
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 8),
+                    // Content snippet
+                    Text(
+                      previewText,
+                      style: TextStyle(
+                         color: (item.color != 0) ? Colors.black54 : Colors.white70,
+                         fontSize: 14,
+                      ),
+                      maxLines: 6,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                 ] 
+               ],
+             ),
+           );
+       }
+    }
+    
+    return Stack(
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(15),
+            // Glass border if no color
+            border: (item is Note && item.color != 0) ? null : Border.all(color: Colors.white.withOpacity(0.1)),
+          ),
+          child: contentBody,
+        ),
+        
+        // PIN INDICATOR
+        if (item is Note && item.isPinned)
+          Positioned(
+            top: 8,
+            right: 8,
+            child: Icon(
+              Icons.push_pin, 
+              size: 16, 
+              color: (item.color != 0) ? Colors.black54 : Colors.white70
+            ),
+          )
+      ],
     );
   }
 }

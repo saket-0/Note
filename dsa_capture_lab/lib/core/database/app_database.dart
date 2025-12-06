@@ -27,9 +27,11 @@ class Note {
   final String title;
   final String content;
   final String? imagePath;
-  final String fileType; // new
+  final String fileType; 
   final int? folderId;
   final DateTime createdAt;
+  final int color; // New: 0xFF... or index
+  final bool isPinned; // New
 
   Note({
     required this.id,
@@ -39,6 +41,8 @@ class Note {
     this.fileType = 'text',
     this.folderId,
     required this.createdAt,
+    this.color = 0,
+    this.isPinned = false,
   });
 
   factory Note.fromMap(Map<String, dynamic> map) {
@@ -47,9 +51,30 @@ class Note {
       title: map['title'],
       content: map['content'],
       imagePath: map['image_path'],
-      fileType: map['file_type'] ?? 'text', // Safe default
+      fileType: map['file_type'] ?? 'text',
       folderId: map['folder_id'],
       createdAt: DateTime.fromMillisecondsSinceEpoch(map['created_at']),
+      color: map['color'] ?? 0,
+      isPinned: (map['is_pinned'] ?? 0) == 1,
+    );
+  }
+  
+  Note copyWith({
+    String? title,
+    String? content,
+    int? color,
+    bool? isPinned,
+  }) {
+    return Note(
+      id: id,
+      title: title ?? this.title,
+      content: content ?? this.content,
+      imagePath: imagePath,
+      fileType: fileType,
+      folderId: folderId,
+      createdAt: createdAt,
+      color: color ?? this.color,
+      isPinned: isPinned ?? this.isPinned,
     );
   }
 }
@@ -106,13 +131,22 @@ class AppDatabase {
       },
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
-        // Auto-migration: check if file_type exists, if not add it
-        try {
-          await db.query('notes', columns: ['file_type'], limit: 1);
-        } catch (e) {
-          // Column likely missing, add it
-          await db.execute('ALTER TABLE notes ADD COLUMN file_type TEXT DEFAULT \'text\'');
-        }
+        // Auto-migrations
+        try { await db.query('notes', columns: ['file_type'], limit: 1); } 
+        catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN file_type TEXT DEFAULT \'text\''); }
+
+        try { await db.query('folders', columns: ['position'], limit: 1); } 
+        catch (_) { await db.execute('ALTER TABLE folders ADD COLUMN position INTEGER DEFAULT 0'); }
+
+        try { await db.query('notes', columns: ['position'], limit: 1); } 
+        catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN position INTEGER DEFAULT 0'); }
+
+        // New Keep Features: Color & Pinned
+        try { await db.query('notes', columns: ['color'], limit: 1); } 
+        catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN color INTEGER DEFAULT 0'); }
+
+        try { await db.query('notes', columns: ['is_pinned'], limit: 1); } 
+        catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN is_pinned INTEGER DEFAULT 0'); }
       },
     );
   }
@@ -121,10 +155,18 @@ class AppDatabase {
   
   Future<int> createFolder(String name, int? parentId) async {
     final db = await database;
+    // Get max position to append at end
+    final List<Map<String, dynamic>> result = await db.rawQuery(
+      'SELECT MAX(position) as maxPos FROM folders WHERE parent_id ${parentId == null ? "IS NULL" : "= ?"}',
+      parentId == null ? [] : [parentId]
+    );
+    int maxPos = (result.first['maxPos'] as int?) ?? -1;
+
     return await db.insert('folders', {
       'name': name,
       'parent_id': parentId,
       'created_at': DateTime.now().millisecondsSinceEpoch,
+      'position': maxPos + 1,
     });
   }
 
@@ -137,7 +179,7 @@ class AppDatabase {
       'folders',
       where: whereClause,
       whereArgs: args,
-      orderBy: 'name ASC',
+      orderBy: 'position ASC, name ASC',
     );
     return maps.map((e) => Folder.fromMap(e)).toList();
   }
@@ -151,16 +193,30 @@ class AppDatabase {
     return null;
   }
 
+  Future<void> updateFolderPosition(int id, int newPosition) async {
+    final db = await database;
+    await db.update('folders', {'position': newPosition}, where: 'id = ?', whereArgs: [id]);
+  }
+
   // --- CRUD for Notes/Files ---
 
   Future<int> createNote({
     required String title,
     required String content,
     String? imagePath,
-    String fileType = 'text', // text, image, pdf, other
+    String fileType = 'text',
     int? folderId,
+    int color = 0,
+    bool isPinned = false,
   }) async {
     final db = await database;
+     // Get max position
+    final List<Map<String, dynamic>> result = await db.rawQuery(
+      'SELECT MAX(position) as maxPos FROM notes WHERE folder_id ${folderId == null ? "IS NULL" : "= ?"}',
+      folderId == null ? [] : [folderId]
+    );
+    int maxPos = (result.first['maxPos'] as int?) ?? -1;
+
     return await db.insert('notes', {
       'title': title,
       'content': content,
@@ -168,6 +224,9 @@ class AppDatabase {
       'file_type': fileType,
       'folder_id': folderId,
       'created_at': DateTime.now().millisecondsSinceEpoch,
+      'position': maxPos + 1,
+      'color': color,
+      'is_pinned': isPinned ? 1 : 0,
     });
   }
 
@@ -178,7 +237,8 @@ class AppDatabase {
       {
         'title': note.title,
         'content': note.content,
-        // file_type generally doesn't change
+        'color': note.color,
+        'is_pinned': note.isPinned ? 1 : 0,
       },
       where: 'id = ?',
       whereArgs: [note.id],
@@ -195,6 +255,11 @@ class AppDatabase {
     );
   }
 
+  Future<void> updateNotePosition(int id, int newPosition) async {
+    final db = await database;
+    await db.update('notes', {'position': newPosition}, where: 'id = ?', whereArgs: [id]);
+  }
+
   Future<int> deleteNote(int id) async {
     final db = await database;
     return await db.delete('notes', where: 'id = ?', whereArgs: [id]);
@@ -209,7 +274,8 @@ class AppDatabase {
       'notes',
       where: whereClause,
       whereArgs: args,
-      orderBy: 'created_at DESC',
+      // Sort: Pinned first, then Position, then Newest
+      orderBy: 'is_pinned DESC, position ASC, created_at DESC', 
     );
     return maps.map((e) => Note.fromMap(e)).toList();
   }

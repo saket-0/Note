@@ -18,21 +18,18 @@ class DsaCaptureApp extends StatelessWidget {
       title: 'DSA Capture Lab',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        // We are using a custom Gradient Background, so the theme background is less relevant,
-        // but we set it to dark to match the vibe.
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0F2027), // Matches gradient start
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF2196F3), 
+          seedColor: const Color(0xFF0D9488), // Teal 600
           brightness: Brightness.dark,
+          surface: const Color(0xFF1E293B),
+          background: const Color(0xFF0F172A),
         ),
         useMaterial3: true,
-        
-        // Consistent App Bar Theme
+        scaffoldBackgroundColor: Colors.transparent, // Allow gradient to show
         appBarTheme: const AppBarTheme(
           centerTitle: true,
           elevation: 0,
-          backgroundColor: Colors.transparent, 
+          backgroundColor: Colors.transparent,
         ),
       ),
       home: const DashboardScreen(),
