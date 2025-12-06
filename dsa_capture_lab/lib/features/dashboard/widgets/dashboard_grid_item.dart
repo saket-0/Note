@@ -166,18 +166,92 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
         ),
       );
     } else { // Note
-       if (item.fileType == 'image' && item.imagePath != null) {
+
+       // 1. IMAGE COLLAGE (Multi-Image)
+       if (item.images.isNotEmpty) {
+          contentBody = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildImageCollage(item.images),
+              if (item.title.isNotEmpty || item.content.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (item.title.isNotEmpty)
+                        Text(
+                          item.title,
+                          style: TextStyle(
+                            color: (item.color != 0) ? Colors.black87 : Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      if (item.content.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          item.content,
+                          style: TextStyle(
+                            color: (item.color != 0) ? Colors.black54 : Colors.white70,
+                            fontSize: 12,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ]
+                    ],
+                  ),
+                )
+            ],
+          );
+       }
+       // 2. SINGLE IMAGE (Legacy or Single)
+       else if (item.fileType == 'image' && item.imagePath != null) {
           contentBody = ClipRRect(
             borderRadius: BorderRadius.circular(15),
             child: Image.file(
               File(item.imagePath!),
               fit: BoxFit.cover,
-              cacheWidth: 400, // Optimize memory usage
-              gaplessPlayback: true, // Prevent flickering
+              cacheWidth: 400,
+              gaplessPlayback: true,
             ),
           );
-       } else {
-          // Text / Other
+       } 
+       // 3. CHECKLIST
+       else if (item.isChecklist) {
+           contentBody = Padding(
+             padding: const EdgeInsets.all(12.0),
+             child: Column(
+               crossAxisAlignment: CrossAxisAlignment.start,
+               mainAxisSize: MainAxisSize.min,
+               children: [
+                  // Title
+                  if (item.title.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        item.title,
+                        style: TextStyle(
+                          color: (item.color != 0) ? Colors.black87 : Colors.white, 
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  // Checklist Preview
+                  ..._buildChecklistPreview(item, isFeedback ? 3 : 6, (item.color != 0) ? Colors.black87 : Colors.white70),
+               ],
+             ),
+           );
+       }
+       // 4. TEXT / OTHER
+       else {
           IconData icon = Icons.insert_drive_file;
            if (item.fileType == 'pdf') {
              icon = Icons.picture_as_pdf;
@@ -185,7 +259,6 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
              icon = Icons.description;
            }
            
-           // Text Content Preview (Keep Style)
            String previewText = item.content.trim();
            if (previewText.isEmpty) previewText = "No content";
 
@@ -193,9 +266,8 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
              padding: const EdgeInsets.all(12.0),
              child: Column(
                crossAxisAlignment: CrossAxisAlignment.start,
-               mainAxisSize: MainAxisSize.min, // Wrap content
+               mainAxisSize: MainAxisSize.min, 
                children: [
-                   if (item.imagePath == null) ...[
                       // Title
                       Text(
                         item.title,
@@ -204,7 +276,7 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
                           fontWeight: FontWeight.bold,
                           fontSize: 16,
                         ),
-                        maxLines: isFeedback ? 1 : 2, // Compact for drag feedback
+                        maxLines: isFeedback ? 1 : 2,
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 8),
@@ -215,24 +287,22 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
                            color: (item.color != 0) ? Colors.black54 : Colors.white70,
                            fontSize: 14,
                         ),
-                        maxLines: isFeedback ? 2 : 6, // Compact for drag feedback
+                        maxLines: isFeedback ? 2 : 6,
                         overflow: TextOverflow.ellipsis,
                       ),
-                   ] 
-                 ],
-               ),
-             );
+               ],
+             ),
+           );
        }
     }
     
     return Stack(
       children: [
         Container(
-          width: double.infinity, // <--- Force full width for 2-column Masonry
+          width: double.infinity,
           decoration: BoxDecoration(
             color: bgColor,
             borderRadius: BorderRadius.circular(15),
-            // Glass border if no color
             border: (item is Note && item.color != 0) ? null : Border.all(color: Colors.white.withOpacity(0.1)),
           ),
           child: contentBody,
@@ -250,7 +320,7 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
             ),
           ),
 
-        // DELETE MENU (Show only if not dragging feedback)
+        // DELETE MENU
         if (!isFeedback)
         Positioned(
             bottom: 4,
@@ -281,4 +351,80 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
       ],
     );
   }
-}
+
+  Widget _buildImageCollage(List<String> images) {
+    if (images.length == 1) {
+      return ClipRRect(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
+        child: Image.file(File(images[0]), fit: BoxFit.cover, height: 150, width: double.infinity, cacheWidth: 400),
+      );
+    } else if (images.length == 2) {
+      return Row(
+         children: images.map((path) => Expanded(
+           child: SizedBox(
+             height: 120,
+             child: Image.file(File(path), fit: BoxFit.cover, cacheWidth: 300),
+           )
+         )).toList(),
+      );
+    } else if (images.length == 3) {
+      return Column(
+        children: [
+          SizedBox(height: 100, width: double.infinity, child: Image.file(File(images[0]), fit: BoxFit.cover, cacheWidth: 400)),
+          Row(
+             children: [
+               Expanded(child: SizedBox(height: 80, child: Image.file(File(images[1]), fit: BoxFit.cover, cacheWidth: 300))),
+               Expanded(child: SizedBox(height: 80, child: Image.file(File(images[2]), fit: BoxFit.cover, cacheWidth: 300))),
+             ],
+          )
+        ],
+      );
+    } else {
+       // 4 or more
+      return GridView.count(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        crossAxisCount: 2,
+        childAspectRatio: 1.5,
+        children: images.take(4).map((path) => Image.file(File(path), fit: BoxFit.cover, cacheWidth: 200)).toList(),
+      );
+    }
+  }
+
+  List<Widget> _buildChecklistPreview(Note note, int maxLines, Color textColor) {
+    final lines = note.content.split('\n').take(maxLines).toList();
+    List<Widget> widgets = [];
+    for (var line in lines) {
+       bool checked = line.startsWith('[x] ');
+       String text = line.replaceFirst(RegExp(r'^\[[ x]\] '), '');
+       widgets.add(
+         Row(
+           children: [
+             Icon(
+               checked ? Icons.check_circle_outline : Icons.radio_button_unchecked,
+               size: 14,
+               color: textColor.withOpacity(0.6),
+             ),
+             const SizedBox(width: 6),
+             Expanded(
+               child: Text(
+                 text,
+                 style: TextStyle(
+                   color: textColor,
+                   fontSize: 13,
+                   decoration: checked ? TextDecoration.lineThrough : null
+                 ),
+                 overflow: TextOverflow.ellipsis,
+               ),
+             )
+           ],
+         )
+       );
+       widgets.add(const SizedBox(height: 4));
+    }
+    if (note.content.split('\n').length > maxLines) {
+       widgets.add(Text("...", style: TextStyle(color: textColor.withOpacity(0.5), fontSize: 10)));
+    }
+    return widgets;
+  }
+} // End Class replacement helper (not actual code)

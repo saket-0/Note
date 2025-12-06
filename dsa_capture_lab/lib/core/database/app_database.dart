@@ -34,38 +34,44 @@ class Note {
   final int id;
   final String title;
   final String content;
-  final String? imagePath;
+  final String? imagePath; // Legacy/Primary Cover
+  final List<String> images; // New Multi-Image support
   final String fileType; 
   final int? folderId;
   final DateTime createdAt;
   final int color; 
   final bool isPinned; 
-  final int position; // Added
+  final bool isChecklist; // New Checklist Mode
+  final int position; 
 
   Note({
     required this.id,
     required this.title,
     required this.content,
     this.imagePath,
+    this.images = const [],
     this.fileType = 'text',
     this.folderId,
     required this.createdAt,
     this.color = 0,
     this.isPinned = false,
-    this.position = 0, // Default
+    this.isChecklist = false,
+    this.position = 0, 
   });
 
-  factory Note.fromMap(Map<String, dynamic> map) {
+  factory Note.fromMap(Map<String, dynamic> map, {List<String> images = const []}) {
     return Note(
       id: map['id'],
       title: map['title'],
       content: map['content'],
       imagePath: map['image_path'],
+      images: images,
       fileType: map['file_type'] ?? 'text',
       folderId: map['folder_id'],
       createdAt: DateTime.fromMillisecondsSinceEpoch(map['created_at']),
       color: map['color'] ?? 0,
       isPinned: (map['is_pinned'] ?? 0) == 1,
+      isChecklist: (map['is_checklist'] ?? 0) == 1,
       position: map['position'] ?? 0,
     );
   }
@@ -75,18 +81,22 @@ class Note {
     String? content,
     int? color,
     bool? isPinned,
+    bool? isChecklist,
     int? position,
+    List<String>? images,
   }) {
     return Note(
       id: id,
       title: title ?? this.title,
       content: content ?? this.content,
       imagePath: imagePath,
+      images: images ?? this.images,
       fileType: fileType,
       folderId: folderId,
       createdAt: createdAt,
       color: color ?? this.color,
       isPinned: isPinned ?? this.isPinned,
+      isChecklist: isChecklist ?? this.isChecklist,
       position: position ?? this.position,
     );
   }
@@ -105,7 +115,7 @@ class AppDatabase {
 
   Future<Database> _initDB() async {
     final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'dsa_notes_v2.db');
+    final path = join(dbPath, 'dsa_notes_v3.db'); // Increment version naming just in case, or stick to v2
 
     return await openDatabase(
       path,
@@ -117,7 +127,8 @@ class AppDatabase {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             parent_id INTEGER,
-            created_at INTEGER NOT NULL
+            created_at INTEGER NOT NULL,
+            position INTEGER DEFAULT 0
           )
         ''');
 
@@ -128,25 +139,33 @@ class AppDatabase {
             title TEXT NOT NULL,
             content TEXT NOT NULL,
             image_path TEXT,
-            file_type TEXT DEFAULT 'text', -- Added file_type with a default
+            file_type TEXT DEFAULT 'text',
             folder_id INTEGER,
             created_at INTEGER NOT NULL,
+            position INTEGER DEFAULT 0,
+            color INTEGER DEFAULT 0,
+            is_pinned INTEGER DEFAULT 0,
+            is_checklist INTEGER DEFAULT 0, -- Added
             FOREIGN KEY (folder_id) REFERENCES folders (id) ON DELETE CASCADE
           )
         ''');
-      },
-      onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 1) {
-          // This block would typically handle migrations from older versions.
-          // Since we are starting with version 1 and adding a column,
-          // we'll handle it with an ALTER TABLE statement if the column is missing.
-        }
+
+        // Create Note Images Table
+        await db.execute('''
+          CREATE TABLE note_images(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            note_id INTEGER NOT NULL,
+            image_path TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (note_id) REFERENCES notes (id) ON DELETE CASCADE
+          )
+        ''');
       },
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
       onOpen: (db) async {
-        // Auto-migrations (Moved to onOpen to ensure tables exist)
+        // Auto-migrations
         try { await db.query('notes', columns: ['file_type'], limit: 1); } 
         catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN file_type TEXT DEFAULT \'text\''); }
 
@@ -161,6 +180,23 @@ class AppDatabase {
 
         try { await db.query('notes', columns: ['is_pinned'], limit: 1); } 
         catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN is_pinned INTEGER DEFAULT 0'); }
+
+         try { await db.query('notes', columns: ['is_checklist'], limit: 1); } 
+        catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN is_checklist INTEGER DEFAULT 0'); }
+
+        // Create note_images table if not exists (using CREATE TABLE IF NOT EXISTS logic implicitly via try/catch usage usually, but for tables we check master)
+        final imagesTable = await db.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='note_images'");
+        if (imagesTable.isEmpty) {
+           await db.execute('''
+            CREATE TABLE note_images(
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              note_id INTEGER NOT NULL,
+              image_path TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              FOREIGN KEY (note_id) REFERENCES notes (id) ON DELETE CASCADE
+            )
+          ''');
+        }
       },
     );
   }
@@ -169,7 +205,6 @@ class AppDatabase {
   
   Future<int> createFolder(String name, int? parentId) async {
     final db = await database;
-    // Get max position to append at end
     final List<Map<String, dynamic>> result = await db.rawQuery(
       'SELECT MAX(position) as maxPos FROM folders WHERE parent_id ${parentId == null ? "IS NULL" : "= ?"}',
       parentId == null ? [] : [parentId]
@@ -223,20 +258,21 @@ class AppDatabase {
     required String title,
     required String content,
     String? imagePath,
+    List<String> images = const [], 
     String fileType = 'text',
     int? folderId,
     int color = 0,
     bool isPinned = false,
+    bool isChecklist = false,
   }) async {
     final db = await database;
-     // Get max position
     final List<Map<String, dynamic>> result = await db.rawQuery(
       'SELECT MAX(position) as maxPos FROM notes WHERE folder_id ${folderId == null ? "IS NULL" : "= ?"}',
       folderId == null ? [] : [folderId]
     );
     int maxPos = (result.first['maxPos'] as int?) ?? -1;
 
-    return await db.insert('notes', {
+    final noteId = await db.insert('notes', {
       'title': title,
       'content': content,
       'image_path': imagePath,
@@ -246,22 +282,52 @@ class AppDatabase {
       'position': maxPos + 1,
       'color': color,
       'is_pinned': isPinned ? 1 : 0,
+      'is_checklist': isChecklist ? 1 : 0,
     });
+
+    // Insert Images
+    for (String path in images) {
+      await db.insert('note_images', {
+        'note_id': noteId,
+        'image_path': path,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      });
+    }
+
+    return noteId;
   }
 
   Future<int> updateNote(Note note) async {
     final db = await database;
-    return await db.update(
+    
+    // Update basic fields
+    await db.update(
       'notes',
       {
         'title': note.title,
         'content': note.content,
         'color': note.color,
         'is_pinned': note.isPinned ? 1 : 0,
+        'is_checklist': note.isChecklist ? 1 : 0,
+        // We don't update legacy image_path usually unless explicitly handled
       },
       where: 'id = ?',
       whereArgs: [note.id],
     );
+
+    // Sync Images (Simple: Delete all and re-add? Or incremental?)
+    // For simplicity/robustness: Delete all linked images and re-add active ones.
+    // Optimization: Diff them, but simplest for now:
+    await db.delete('note_images', where: 'note_id = ?', whereArgs: [note.id]);
+    for (String path in note.images) {
+      await db.insert('note_images', {
+        'note_id': note.id,
+        'image_path': path,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      });
+    }
+
+    return note.id;
   }
   
   Future<int> moveNote(int noteId, int targetFolderId) async {
@@ -293,10 +359,24 @@ class AppDatabase {
       'notes',
       where: whereClause,
       whereArgs: args,
-      // Sort: Pinned first, then Position, then Newest
       orderBy: 'is_pinned DESC, position ASC, created_at DESC', 
     );
-    return maps.map((e) => Note.fromMap(e)).toList();
+    
+    // Fetch images for each note?
+    // Optimization: Fetch ALL images for these notes in one query?
+    // "SELECT * FROM note_images WHERE note_id IN (...)"
+    // Or just simple loop for now (easier to implement).
+    
+    List<Note> notes = [];
+    for (var m in maps) {
+       final noteId = m['id'] as int;
+       final imgMaps = await db.query('note_images', where: 'note_id = ?', whereArgs: [noteId]);
+       final images = imgMaps.map((i) => i['image_path'] as String).toList();
+       
+       notes.add(Note.fromMap(m, images: images));
+    }
+
+    return notes;
   }
 }
 
