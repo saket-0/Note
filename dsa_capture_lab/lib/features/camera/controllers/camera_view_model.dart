@@ -81,16 +81,23 @@ class CameraViewModel extends StateNotifier<BatchCameraState> {
     ref.read(refreshTriggerProvider.notifier).state++;
   }
   
-  // Single Save helper
-  Future<void> saveSingle(String path, int? folderId) async {
+  // Single Save helper (Returns Note ID)
+  Future<int> saveSingle(String path, int? folderId) async {
     final db = ref.read(dbProvider);
-    await db.createNote(
+    final id = await db.createNote(
       title: "Snapshot ${DateTime.now().minute}:${DateTime.now().second}",
       content: "",
       imagePath: path,
       folderId: folderId,
       fileType: 'image'
     );
+    ref.read(refreshTriggerProvider.notifier).state++;
+    return id;
+  }
+
+  Future<void> deleteNote(int id) async {
+    final db = ref.read(dbProvider);
+    await db.deleteNote(id);
     ref.read(refreshTriggerProvider.notifier).state++;
   }
 }

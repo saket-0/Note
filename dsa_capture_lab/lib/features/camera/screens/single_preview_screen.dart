@@ -69,7 +69,7 @@ class SinglePreviewScreen extends ConsumerWidget {
                       child: const Icon(Icons.delete_outline, color: Colors.white),
                     ),
                     const SizedBox(height: 8),
-                    const Text("Discard", style: TextStyle(color: Colors.white))
+                    const Text("Delete", style: TextStyle(color: Colors.white))
                   ],
                 ),
                 Column(
@@ -82,7 +82,7 @@ class SinglePreviewScreen extends ConsumerWidget {
                       child: const Icon(Icons.check, size: 30),
                     ),
                     const SizedBox(height: 8),
-                    const Text("Save", style: TextStyle(color: Colors.white))
+                    const Text("Done", style: TextStyle(color: Colors.white))
                   ],
                 ),
               ],

@@ -19,23 +19,30 @@ class CameraScreen extends ConsumerStatefulWidget {
 class _CameraScreenState extends ConsumerState<CameraScreen> {
   // Local state for Single Mode preview only
   String? _singleCapturedPath;
+  int? _singleCapturedId;
 
   @override
   Widget build(BuildContext context) {
     final cameraState = ref.watch(cameraViewModelProvider);
     final viewModel = ref.read(cameraViewModelProvider.notifier);
 
-    // If Single Mode has a capture, show Preview
+    // If Single Mode has a capture, show Preview (Already Saved)
     if (!cameraState.isBatchMode && _singleCapturedPath != null) {
       return SinglePreviewScreen(
         imagePath: _singleCapturedPath!,
         folderId: widget.folderId,
-        onDiscard: () {
-          try { File(_singleCapturedPath!).delete(); } catch (_) {}
-          setState(() => _singleCapturedPath = null);
+        onDiscard: () async {
+          // DELETE (User rejected the instantly saved photo)
+           if (_singleCapturedId != null) {
+             await viewModel.deleteNote(_singleCapturedId!);
+           }
+           setState(() {
+             _singleCapturedPath = null;
+             _singleCapturedId = null;
+           });
         },
-        onSave: () async {
-          await viewModel.saveSingle(_singleCapturedPath!, widget.folderId);
+        onSave: () {
+          // DONE (User accepted the already saved photo)
           if (context.mounted) Navigator.pop(context);
         },
       );
@@ -56,9 +63,6 @@ class _CameraScreenState extends ConsumerState<CameraScreen> {
                 return SingleCaptureRequest(filePath, sensors.first);
               },
             ),
-            // HIDE DEFAULT UI ELEMENTS IF NEEDED or USE THEM
-            // We use 'awesome' but we need to overlay controls.
-            // Actually 'awesome' gives us the shutter. We just need to handle top/bottom overlays.
             
             topActionsBuilder: (state) => _buildTopBar(cameraState, viewModel),
             
@@ -66,15 +70,22 @@ class _CameraScreenState extends ConsumerState<CameraScreen> {
             onMediaCaptureEvent: (event) {
                if (event.status == MediaCaptureStatus.success) {
                  event.captureRequest.when(
-                   single: (single) {
+                   single: (single) async {
                      final path = single.file?.path;
                      if (path != null) {
                        if (cameraState.isBatchMode) {
                          // Batch: Add to list, no preview
                          viewModel.addPhoto(path);
                        } else {
-                         // Single: Show Preview
-                         setState(() => _singleCapturedPath = path);
+                         // Single: INSTANT SAVE & Show Preview
+                         // We save first to ensure persistence
+                         final id = await viewModel.saveSingle(path, widget.folderId);
+                         if (mounted) {
+                           setState(() {
+                             _singleCapturedPath = path;
+                             _singleCapturedId = id;
+                           });
+                         }
                        }
                      }
                    },
