@@ -17,6 +17,8 @@ class DashboardController {
 
   Future<void> handleDrop(String incomingKey, dynamic targetItem, String zone, List<dynamic> allItems) async {
     final db = ref.read(dbProvider);
+    final currentId = ref.read(currentFolderProvider);
+    final viewModel = ref.read(contentProvider(currentId).notifier);
     
     // Parse Key: "folder_123" -> Type=Folder, ID=123
     final parts = incomingKey.split('_');
@@ -39,40 +41,32 @@ class DashboardController {
 
     if (zone == 'merge') {
       // MERGE LOGIC
-      // Check ID equality manually to be safe across instances
       bool isSelf = false;
       if (incomingObj is Folder && targetItem is Folder) isSelf = incomingObj.id == targetItem.id;
       if (incomingObj is Note && targetItem is Note) isSelf = incomingObj.id == targetItem.id;
       
-      if (isSelf) {
-        print("DEBUG: Dropped on self (merge)");
-        return; 
-      }
+      if (isSelf) return; 
 
       if (targetItem is Folder) {
-        print("DEBUG: Target is Folder");
         // Move into Folder
         if (incomingObj is Note) {
-           print("DEBUG: Moving Note to Folder");
            await db.moveNote(incomingObj.id, targetItem.id);
         } else if (incomingObj is Folder) {
-           // Move folder into folder
+           // Move folder into folder (Future scope)
         }
       } else if (targetItem is Note) {
-        print("DEBUG: Target is Note");
         // File on File -> Group
         if (incomingObj is Note) {
-          print("DEBUG: Merging Note into Note -> Group");
           await _mergeItemsIntoFolder(incomingObj.id, targetItem);
-        } else {
-           print("DEBUG: Incoming is not Note (it is ${incomingObj.runtimeType})");
+          return; // _merge handles refresh
         }
       }
+      viewModel.load(silent: true);
     } else {
-      // REORDER LOGIC
+      // REORDER LOGIC (Optimistic UI could be here, but for now we rely on silent sync)
       int oldIndex = allItems.indexOf(incomingObj);
       int newIndex = allItems.indexOf(targetItem);
-      if (oldIndex == -1 || newIndex == -1) return; // safety
+      if (oldIndex == -1 || newIndex == -1) return; 
       
       if (zone == 'right') newIndex++; 
 
@@ -86,7 +80,10 @@ class DashboardController {
       
       sortedList.insert(newIndex, incomingObj);
       
-      // Update DB
+      // OPTIMISTIC UPDATE: Update UI immediately
+      viewModel.updateList(sortedList);
+      
+      // Update DB in background
       for (int i = 0; i < sortedList.length; i++) {
         final obj = sortedList[i];
         if (obj is Folder) {
@@ -95,15 +92,16 @@ class DashboardController {
           await db.updateNotePosition(obj.id, i);
         }
       }
+      // No need to reload, local state is valid.
     }
-    
-    ref.read(refreshTriggerProvider.notifier).state++;
   }
 
   Future<void> _mergeItemsIntoFolder(int incomingNoteId, Note targetNote) async {
     // 1. Create a new folder named "Group"
     final db = ref.read(dbProvider);
     final currentId = ref.read(currentFolderProvider);
+    final viewModel = ref.read(contentProvider(currentId).notifier);
+    
     final newFolderId = await db.createFolder("Group", currentId);
 
     // 2. Move BOTH items into the new folder
@@ -111,7 +109,7 @@ class DashboardController {
     await db.moveNote(targetNote.id, newFolderId);  // target item
     
     // 3. Refresh UI
-    ref.read(refreshTriggerProvider.notifier).state++;
+    viewModel.load(silent: true);
     
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -132,7 +130,11 @@ class DashboardController {
           )
         )
       );
-      ref.read(refreshTriggerProvider.notifier).state++;
+      // Silent refresh on return
+      if(context.mounted) {
+         final currentId = ref.read(currentFolderProvider);
+         ref.read(contentProvider(currentId).notifier).load(silent: true);
+      }
     } else if (note.imagePath != null) {
       // Open External File WITH OPEN_FILEX
        final result = await OpenFilex.open(note.imagePath!);
@@ -160,6 +162,7 @@ class DashboardController {
 
       final db = ref.read(dbProvider);
       final currentId = ref.read(currentFolderProvider);
+      final viewModel = ref.read(contentProvider(currentId).notifier);
       
       await db.createNote(
         title: name,
@@ -168,7 +171,7 @@ class DashboardController {
         fileType: type,
         folderId: currentId
       );
-      ref.read(refreshTriggerProvider.notifier).state++;
+      viewModel.load(silent: true);
     }
   }
 
@@ -201,8 +204,10 @@ class DashboardController {
               if (name.isNotEmpty) {
                 final db = ref.read(dbProvider);
                 final currentId = ref.read(currentFolderProvider);
+                final viewModel = ref.read(contentProvider(currentId).notifier);
+
                 await db.createFolder(name, currentId);
-                ref.read(refreshTriggerProvider.notifier).state++; // Trigger refresh
+                viewModel.load(silent: true);
                 if (context.mounted) Navigator.pop(context);
               }
             },
@@ -240,17 +245,24 @@ class DashboardController {
 
     if (confirm == true) {
       final db = ref.read(dbProvider);
+      final currentId = ref.read(currentFolderProvider);
+      final viewModel = ref.read(contentProvider(currentId).notifier);
+      
+      // Optimistic Update
+      viewModel.removeItem(item);
+
       if (isFolder) {
         await db.deleteFolder(item.id);
       } else if (item is Note) {
         await db.deleteNote(item.id);
       }
-      ref.read(refreshTriggerProvider.notifier).state++;
+      // viewModel.load(silent: true); // Not needed since removeItem handled it and delete is atomic
     }
   }
   Future<void> moveItemToParent(String incomingKey) async {
     final db = ref.read(dbProvider);
     final currentFolderId = ref.read(currentFolderProvider);
+    final viewModel = ref.read(contentProvider(currentFolderId).notifier);
     
     // Check if we are actually inside a folder
     if (currentFolderId == null) return;
@@ -272,7 +284,7 @@ class DashboardController {
       whereArgs: [id]
     ));
     
-    ref.read(refreshTriggerProvider.notifier).state++;
+    viewModel.load(silent: true);
     
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

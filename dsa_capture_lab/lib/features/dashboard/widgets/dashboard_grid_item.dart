@@ -171,7 +171,9 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
             borderRadius: BorderRadius.circular(15),
             child: Image.file(
               File(item.imagePath!),
-              fit: BoxFit.cover, 
+              fit: BoxFit.cover,
+              cacheWidth: 400, // Optimize memory usage
+              gaplessPlayback: true, // Prevent flickering
             ),
           );
        } else {

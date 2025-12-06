@@ -21,8 +21,13 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final currentFolderId = ref.watch(currentFolderProvider);
-    final folderInfo = ref.watch(currentFolderObjProvider);
-    final contentAsync = ref.watch(contentProvider);
+    
+    // Optimized Providers (Cached by ID)
+    final contentAsync = ref.watch(contentProvider(currentFolderId));
+    
+    final AsyncValue<Folder?> folderInfo = currentFolderId == null
+        ? const AsyncValue.data(null)
+        : ref.watch(folderDetailsProvider(currentFolderId));
 
     // Instantiate Controller
     final controller = DashboardController(context, ref);
@@ -33,7 +38,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         title: folderInfo.when(
           data: (f) => Text(f?.name ?? "My Knowledge Base"),
           loading: () => const Text("Loading..."),
-          error: (_, __) => const Text("Error"),
+          error: (_, __) => const Text("My Knowledge Base"),
         ),
         backgroundColor: Colors.transparent,
         elevation: 0,
@@ -71,7 +76,12 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 }
                 
                 // MASONRY GRID (Keep Style)
+                // We add a key based on item order to force layout recalculation on reorder
+                // This prevents the "Right column empty" glitch.
+                final String gridKey = items.map((e) => "${e.runtimeType}_${e.id}").join('_');
+                
                 return MasonryGridView.count(
+                  key: ValueKey(gridKey),
                   crossAxisCount: 2,
                   mainAxisSpacing: 12,
                   crossAxisSpacing: 12,
@@ -128,7 +138,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 context, 
                 MaterialPageRoute(builder: (_) => CameraScreen(folderId: currentFolderId))
               );
-              ref.read(refreshTriggerProvider.notifier).state++;
+              ref.read(contentProvider(currentFolderId).notifier).load(silent: true);
             },
             child: const Icon(Icons.camera_alt, color: Colors.white),
           ),
@@ -141,7 +151,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                 context, 
                 MaterialPageRoute(builder: (_) => EditorScreen(folderId: currentFolderId))
               );
-              ref.read(refreshTriggerProvider.notifier).state++;
+              ref.read(contentProvider(currentFolderId).notifier).load(silent: true);
             },
             child: const Icon(Icons.edit, color: Colors.white),
           ),
