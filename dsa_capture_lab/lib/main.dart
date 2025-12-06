@@ -3,14 +3,31 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 // IMPORTS: Feature-First structure
 import 'features/dashboard/dashboard_screen.dart';
+import 'features/dashboard/providers/dashboard_state.dart'; // Import providers
 
 void main() {
-  // 1. ProviderScope is required for Riverpod to manage state (Database, etc.)
   runApp(const ProviderScope(child: DsaCaptureApp()));
 }
 
-class DsaCaptureApp extends StatelessWidget {
+class DsaCaptureApp extends ConsumerStatefulWidget {
   const DsaCaptureApp({super.key});
+
+  @override
+  ConsumerState<DsaCaptureApp> createState() => _DsaCaptureAppState();
+}
+
+class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
+  
+  @override
+  void initState() {
+    super.initState();
+    // OPTIMIZATION: Seamless Background Loading
+    // Start fetching root folder data immediately on app launch.
+    // By the time the UI builds, data is likely ready or cached.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+       ref.read(contentProvider(null).notifier).load(silent: false);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

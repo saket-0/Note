@@ -82,16 +82,38 @@ class CameraViewModel extends StateNotifier<BatchCameraState> {
     ref.read(refreshTriggerProvider.notifier).state++;
   }
 
+  // Purely Optimistic Delete
   Future<void> deleteBatchPhoto(Note note) async {
-    final db = ref.read(dbProvider);
-    await db.deleteNote(note.id);
-    
+    // 1. Update UI Immediately
     final newList = List<Note>.from(state.capturedItems)..removeWhere((n) => n.id == note.id);
     state = state.copyWith(capturedItems: newList);
     
-    // If empty, maybe delete the folder? 
-    // User requirement: "do not loose data". 
-    // We keep the folder even if empty for now, or let user delete it from dashboard.
+    // 2. Process in Background
+    final db = ref.read(dbProvider);
+    await db.deleteNote(note.id);
+    // Cleanup file? usually beneficial but optional for speed.
+    try { File(note.imagePath!).delete(); } catch (_) {}
+    
+    ref.read(refreshTriggerProvider.notifier).state++;
+  }
+
+  Future<void> discardBatch() async {
+    final itemsToDelete = List<Note>.from(state.capturedItems);
+    final folderId = state.activeBatchFolderId;
+
+    // 1. Clear UI Immediately
+    state = state.copyWith(capturedItems: [], activeBatchFolderId: null);
+
+    // 2. Background Cleanup
+    final db = ref.read(dbProvider);
+    for (var note in itemsToDelete) {
+       await db.deleteNote(note.id);
+       try { File(note.imagePath!).delete(); } catch (_) {}
+    }
+    if (folderId != null) {
+      await db.deleteFolder(folderId);
+    }
+    
     ref.read(refreshTriggerProvider.notifier).state++;
   }
 

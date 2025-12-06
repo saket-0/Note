@@ -52,7 +52,13 @@ class DashboardController {
         if (incomingObj is Note) {
            await db.moveNote(incomingObj.id, targetItem.id);
         } else if (incomingObj is Folder) {
-           // Move folder into folder (Future scope)
+           // Move folder into folder
+           await db.database.then((d) => d.update(
+             'folders', 
+             {'parent_id': targetItem.id}, 
+             where: 'id = ?', 
+             whereArgs: [incomingObj.id]
+           ));
         }
       } else if (targetItem is Note) {
         // File on File -> Group

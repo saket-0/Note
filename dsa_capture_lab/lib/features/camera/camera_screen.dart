@@ -7,6 +7,8 @@ import 'dart:io';
 
 import 'controllers/camera_view_model.dart';
 import 'screens/single_preview_screen.dart';
+import 'widgets/camera_top_bar.dart';
+import 'widgets/camera_control_bar.dart';
 
 class CameraScreen extends ConsumerStatefulWidget {
   final int? folderId;
@@ -31,10 +33,10 @@ class _CameraScreenState extends ConsumerState<CameraScreen> {
       return SinglePreviewScreen(
         imagePath: _singleCapturedPath!,
         folderId: widget.folderId,
-        onDiscard: () async {
+        onDiscard: () {
           // DELETE (User rejected the instantly saved photo)
            if (_singleCapturedId != null) {
-             await viewModel.deleteNote(_singleCapturedId!);
+              viewModel.deleteNote(_singleCapturedId!); // Optimistic
            }
            setState(() {
              _singleCapturedPath = null;
@@ -54,6 +56,12 @@ class _CameraScreenState extends ConsumerState<CameraScreen> {
         children: [
           // CAMERA
           CameraAwesomeBuilder.awesome(
+            // Performance Tuning: Fixed Aspect Ratio & Back Camera default
+            sensorConfig: SensorConfig.single(
+              sensor: Sensor.position(SensorPosition.back),
+              aspectRatio: CameraAspectRatios.ratio_16_9, 
+              flashMode: FlashMode.auto,
+            ),
             saveConfig: SaveConfig.photo(
               pathBuilder: (sensors) async {
                 final Directory extDir = await getApplicationDocumentsDirectory();
@@ -64,7 +72,30 @@ class _CameraScreenState extends ConsumerState<CameraScreen> {
               },
             ),
             
-            topActionsBuilder: (state) => _buildTopBar(cameraState, viewModel),
+            // Custom UI Overlays
+            topActionsBuilder: (state) => const SizedBox.shrink(), // We use TopBar overlay
+            middleContentBuilder: (state) => const SizedBox.shrink(),
+            
+            bottomActionsBuilder: (state) {
+               return CameraControlBar(
+                  isBatchMode: cameraState.isBatchMode,
+                  capturedItems: cameraState.capturedItems,
+                  onDiscardBatch: () => viewModel.discardBatch(),
+                  onFinishBatch: () {
+                     viewModel.endBatchSession();
+                     Navigator.pop(context);
+                  },
+                  onTakePicture: () {
+                    state.when(
+                      onPhotoMode: (photoState) => photoState.takePhoto(),
+                      onVideoMode: (videoState) => videoState.startRecording(),
+                      onPreparingCamera: (_) {},
+                      onVideoRecordingMode: (_) {},
+                    );
+                  },
+                  onItemTap: (note) => _showBatchItemPreview(context, note, viewModel),
+                );
+            },
             
             // On Capture
             onMediaCaptureEvent: (event) {
@@ -93,64 +124,18 @@ class _CameraScreenState extends ConsumerState<CameraScreen> {
                }
             },
           ),
-
-          // BATCH UI: Thumbnail Strip & Done
-          if (cameraState.isBatchMode && cameraState.capturedItems.isNotEmpty)
-            Positioned(
-              bottom: 120, 
-              left: 0,
-              right: 0,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  // DONE BUTTON
-                  Padding(
-                    padding: const EdgeInsets.only(right: 20, bottom: 10),
-                    child: FloatingActionButton.extended(
-                      heroTag: "batch_done",
-                      onPressed: () {
-                         // Just finish the session, data is already saved
-                         viewModel.endBatchSession();
-                         Navigator.pop(context);
-                      },
-                      label: Text("Finish (${cameraState.capturedItems.length})"),
-                      icon: const Icon(Icons.check),
-                      backgroundColor: Colors.teal,
-                    ),
-                  ),
-                  
-                  // THUMBNAIL STRIP
-                  SizedBox(
-                    height: 80,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: cameraState.capturedItems.length,
-                      itemBuilder: (context, index) {
-                        final note = cameraState.capturedItems[cameraState.capturedItems.length - 1 - index]; // Show newest first
-                        return GestureDetector(
-                          onTap: () => _showBatchItemPreview(context, note, viewModel),
-                          child: Container(
-                            margin: const EdgeInsets.only(right: 12),
-                            width: 80,
-                            height: 80,
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.white, width: 2),
-                              image: DecorationImage(
-                                image: FileImage(File(note.imagePath!)),
-                                fit: BoxFit.cover
-                              ),
-                            ),
-                            child: const Icon(Icons.zoom_in, color: Colors.white54),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
+          
+          // TOP BAR
+          Positioned(
+            top: 0, left: 0, right: 0,
+            child: CameraTopBar(
+              isBatchMode: cameraState.isBatchMode,
+              onModeChanged: (val) => viewModel.toggleMode(val),
+              onBack: () => Navigator.pop(context),
             ),
+          ),
+
+
         ],
       ),
     );
@@ -159,82 +144,31 @@ class _CameraScreenState extends ConsumerState<CameraScreen> {
   void _showBatchItemPreview(BuildContext context, dynamic note, CameraViewModel viewModel) {
      showDialog(
        context: context, 
+       barrierDismissible: true,
        builder: (ctx) => Dialog(
          backgroundColor: Colors.transparent,
-         insetPadding: const EdgeInsets.all(20),
-         child: Stack(
-           clipBehavior: Clip.none,
-           alignment: Alignment.center,
+         insetPadding: const EdgeInsets.all(10),
+         child: Column(
+           mainAxisSize: MainAxisSize.min,
            children: [
              ClipRRect(
                borderRadius: BorderRadius.circular(20),
                child: Image.file(File(note.imagePath!), fit: BoxFit.contain),
              ),
-             Positioned(
-               bottom: -30,
-               child: FloatingActionButton(
-                 backgroundColor: Colors.red,
-                 onPressed: () async {
-                   await viewModel.deleteBatchPhoto(note);
-                   if (ctx.mounted) Navigator.pop(ctx);
-                 },
-                 child: const Icon(Icons.delete, color: Colors.white),
-               ),
+             const SizedBox(height: 20),
+             FloatingActionButton.extended(
+               label: const Text("Delete"),
+               icon: const Icon(Icons.delete),
+               backgroundColor: Colors.red,
+               onPressed: () {
+                 // Optimistic Delete: Close dialog immediately, VM handles state & DB
+                 Navigator.pop(ctx);
+                 viewModel.deleteBatchPhoto(note);
+               },
              ),
-             Positioned(
-               top: -10,
-               right: -10,
-               child: CircleAvatar(
-                 backgroundColor: Colors.white,
-                 child: IconButton(
-                   icon: const Icon(Icons.close, color: Colors.black),
-                   onPressed: () => Navigator.pop(ctx),
-                 ),
-               ),
-             )
            ],
          ),
        )
      );
-  }
-
-  Widget _buildTopBar(BatchCameraState state, CameraViewModel viewModel) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          // Back
-          CircleAvatar(
-            backgroundColor: Colors.black45,
-            child: IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.white),
-              onPressed: () => Navigator.pop(context),
-            ),
-          ),
-
-          // Mode Toggle
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.black45,
-              borderRadius: BorderRadius.circular(20)
-            ),
-            child: Row(
-              children: [
-                const Text("Quick", style: TextStyle(color: Colors.white, fontSize: 12)),
-                Switch(
-                  value: state.isBatchMode,
-                  onChanged: (val) => viewModel.toggleMode(val),
-                  activeColor: Colors.amber,
-                  activeTrackColor: Colors.amber.withOpacity(0.3),
-                ),
-                Text("Batch", style: TextStyle(color: state.isBatchMode ? Colors.amber : Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-              ],
-            ),
-          )
-        ],
-      ),
-    );
   }
 }
