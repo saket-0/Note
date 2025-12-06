@@ -20,8 +20,32 @@ final contentProvider = FutureProvider.autoDispose<List<dynamic>>((ref) async {
     final notes = await db.getNotes(currentFolderId);
     print("DEBUG: fetched ${folders.length} folders and ${notes.length} notes");
     
-    // Combine (Folders first, then Files)
-    return [...folders, ...notes];
+    // Combine and Sort
+    final allItems = [...folders, ...notes];
+    
+    allItems.sort((a, b) {
+      // 1. PINNED Check (Notes only for now)
+      final aPinned = (a is Note && a.isPinned);
+      final bPinned = (b is Note && b.isPinned);
+      
+      if (aPinned != bPinned) {
+        return aPinned ? -1 : 1; // Pinned first
+      }
+
+      // 2. POSITION Check
+      int posA = 0; 
+      int posB = 0;
+      
+      if (a is Folder) posA = a.position;
+      else if (a is Note) posA = a.position;
+      
+      if (b is Folder) posB = b.position;
+      else if (b is Note) posB = b.position;
+      
+      return posA.compareTo(posB);
+    });
+
+    return allItems;
   } catch (e, stack) {
     print("DEBUG: contentProvider ERROR: $e");
     print(stack);

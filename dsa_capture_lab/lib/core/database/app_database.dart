@@ -9,8 +9,15 @@ class Folder {
   final String name;
   final int? parentId;
   final DateTime createdAt;
+  final int position; // Added
 
-  Folder({required this.id, required this.name, this.parentId, required this.createdAt});
+  Folder({
+    required this.id, 
+    required this.name, 
+    this.parentId, 
+    required this.createdAt,
+    this.position = 0, // Default
+  });
 
   factory Folder.fromMap(Map<String, dynamic> map) {
     return Folder(
@@ -18,6 +25,7 @@ class Folder {
       name: map['name'],
       parentId: map['parent_id'],
       createdAt: DateTime.fromMillisecondsSinceEpoch(map['created_at']),
+      position: map['position'] ?? 0,
     );
   }
 }
@@ -30,8 +38,9 @@ class Note {
   final String fileType; 
   final int? folderId;
   final DateTime createdAt;
-  final int color; // New: 0xFF... or index
-  final bool isPinned; // New
+  final int color; 
+  final bool isPinned; 
+  final int position; // Added
 
   Note({
     required this.id,
@@ -43,6 +52,7 @@ class Note {
     required this.createdAt,
     this.color = 0,
     this.isPinned = false,
+    this.position = 0, // Default
   });
 
   factory Note.fromMap(Map<String, dynamic> map) {
@@ -56,6 +66,7 @@ class Note {
       createdAt: DateTime.fromMillisecondsSinceEpoch(map['created_at']),
       color: map['color'] ?? 0,
       isPinned: (map['is_pinned'] ?? 0) == 1,
+      position: map['position'] ?? 0,
     );
   }
   
@@ -64,6 +75,7 @@ class Note {
     String? content,
     int? color,
     bool? isPinned,
+    int? position,
   }) {
     return Note(
       id: id,
@@ -75,6 +87,7 @@ class Note {
       createdAt: createdAt,
       color: color ?? this.color,
       isPinned: isPinned ?? this.isPinned,
+      position: position ?? this.position,
     );
   }
 }

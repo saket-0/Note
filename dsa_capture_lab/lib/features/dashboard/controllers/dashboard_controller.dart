@@ -25,11 +25,13 @@ class DashboardController {
     
     // Find Strategy
     dynamic incomingObj;
-    if (type == 'folder') {
-      incomingObj = allItems.firstWhere((e) => e is Folder && e.id == id, orElse: () => null);
-    } else {
-      incomingObj = allItems.firstWhere((e) => e is Note && e.id == id, orElse: () => null);
-    }
+    final matches = allItems.where((e) {
+      if (type == 'folder') return e is Folder && e.id == id;
+      return e is Note && e.id == id;
+    });
+
+    if (matches.isEmpty) return;
+    incomingObj = matches.first;
 
     if (incomingObj == null) return;
 

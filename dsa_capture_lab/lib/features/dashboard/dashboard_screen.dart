@@ -68,8 +68,10 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   itemCount: items.length,
                   itemBuilder: (context, index) {
                     final item = items[index];
+                    final String itemKey = (item is Folder) ? "folder_${item.id}" : "note_${item.id}";
+                    
                     return DashboardGridItem(
-                      key: ValueKey(item.id), // Important for stability
+                      key: ValueKey(itemKey), // Unique Key across types
                       item: item,
                       allItems: items,
                       onDrop: (incomingKey, zone) => controller.handleDrop(incomingKey, item, zone, items),
