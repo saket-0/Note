@@ -1,56 +1,74 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/database/app_database.dart';
-import '../../../core/cache/cache_service.dart';
+import '../../../shared/data/data_repository.dart';
+import '../../../shared/domain/entities/entities.dart';
 
-// Filter Enum
+// Re-export for backward compatibility
+export '../../../shared/domain/entities/entities.dart';
+
+// ===========================================
+// FILTER & VIEW STATE
+// ===========================================
+
 enum DashboardFilter { active, archived, trash }
-
-// View Mode Enum
 enum ViewMode { grid, list }
 
-// Current Filter Provider
 final activeFilterProvider = StateProvider<DashboardFilter>((ref) => DashboardFilter.active);
-
-// View Mode Provider (grid by default)
 final viewModeProvider = StateProvider<ViewMode>((ref) => ViewMode.grid);
-
-// Tracks the current folder ID (null = root)
 final currentFolderProvider = StateProvider<int?>((ref) => null);
 
-// Trigger to force refresh (incremented to trigger rebuilds)
-final refreshTriggerProvider = StateProvider<int>((ref) => 0);
+// ===========================================
+// REACTIVE DATA PROVIDERS
+// Uses version from DataRepository for automatic updates
+// ===========================================
 
-// --- MEMORY-FIRST PROVIDERS ---
-// These read directly from CacheService (SYNCHRONOUS!)
+/// Version counter that triggers rebuilds on data changes
+final dataVersionProvider = StateProvider<int>((ref) => 0);
 
-/// Active content for a specific folder (hierarchical)
+/// Active content for a folder - rebuilds when version changes
 final activeContentProvider = Provider.family<List<dynamic>, int?>((ref, folderId) {
-  // Watch refresh trigger to rebuild when data changes
-  ref.watch(refreshTriggerProvider);
+  // Watch the version counter to trigger rebuilds
+  ref.watch(dataVersionProvider);
   
-  final cache = ref.read(cacheServiceProvider);
-  return cache.getActiveContent(folderId);
+  final repo = ref.read(dataRepositoryProvider);
+  return repo.getActiveContent(folderId);
 });
 
-/// All archived items (flat list)
+/// Archived content - rebuilds when version changes
 final archivedContentProvider = Provider<List<dynamic>>((ref) {
-  ref.watch(refreshTriggerProvider);
+  ref.watch(dataVersionProvider);
   
-  final cache = ref.read(cacheServiceProvider);
-  return cache.getArchivedContent();
+  final repo = ref.read(dataRepositoryProvider);
+  return repo.getArchivedContent();
 });
 
-/// All trashed items (flat list)
+/// Trashed content - rebuilds when version changes
 final trashContentProvider = Provider<List<dynamic>>((ref) {
-  ref.watch(refreshTriggerProvider);
+  ref.watch(dataVersionProvider);
   
-  final cache = ref.read(cacheServiceProvider);
-  return cache.getTrashedContent();
+  final repo = ref.read(dataRepositoryProvider);
+  return repo.getTrashedContent();
 });
 
-// Cache the Folder Object itself
-final folderDetailsProvider = FutureProvider.family<Folder?, int>((ref, id) async {
-  final db = ref.watch(dbProvider);
-  return await db.getFolder(id);
+/// Folder details lookup
+final folderDetailsProvider = Provider.family<Folder?, int>((ref, id) {
+  ref.watch(dataVersionProvider);
+  
+  final repo = ref.read(dataRepositoryProvider);
+  return repo.findFolder(id);
 });
 
+/// Get all image paths for a folder (for preloading)
+final folderImagePathsProvider = Provider.family<List<String>, int?>((ref, folderId) {
+  ref.watch(dataVersionProvider);
+  
+  final repo = ref.read(dataRepositoryProvider);
+  return repo.getImagePathsForFolder(folderId);
+});
+
+/// Get subfolder IDs for prefetching
+final subfolderIdsProvider = Provider.family<List<int>, int?>((ref, parentId) {
+  ref.watch(dataVersionProvider);
+  
+  final repo = ref.read(dataRepositoryProvider);
+  return repo.getSubfolderIds(parentId);
+});

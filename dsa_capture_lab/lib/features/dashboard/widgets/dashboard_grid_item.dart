@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/database/app_database.dart';
+import '../../../shared/domain/entities/entities.dart';
 import '../controllers/dashboard_controller.dart';
 import 'joystick_menu.dart';
 

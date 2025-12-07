@@ -1,5 +1,5 @@
 
-import '../../../core/database/app_database.dart';
+import '../../../shared/domain/entities/entities.dart';
 
 class BatchCameraState {
   final bool isBatchMode;

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
-import '../../../core/database/app_database.dart';
+import '../../../shared/domain/entities/entities.dart';
 import '../controllers/dashboard_controller.dart';
 import '../providers/dashboard_state.dart';
 import 'dashboard_grid_item.dart';
@@ -26,11 +26,14 @@ class DashboardContent extends ConsumerWidget {
       return _buildEmptyState();
     }
     
-    final String gridKey = items.map((e) => "${e.runtimeType}_${e.id}").join('_');
-    
+    // Use PageStorageKey/ValueKey based on CONTEXT (Folder/Filter), not CONTENT.
+    // This ensures scroll position is preserved when items are added/removed/modified.
+    // Including viewMode ensures we reset if switching list<->grid.
+    final String storageKey = "${currentFilter}_${controller.ref.read(currentFolderProvider) ?? 'root'}_$viewMode";
+
     if (viewMode == ViewMode.list) {
       return ListView.separated(
-        key: ValueKey('list_$gridKey'),
+        key: PageStorageKey('list_$storageKey'),
         itemCount: items.length,
         separatorBuilder: (_, __) => const SizedBox(height: 12),
         itemBuilder: (context, index) => _buildItem(context, ref, index),
@@ -38,7 +41,7 @@ class DashboardContent extends ConsumerWidget {
     }
     
     return MasonryGridView.count(
-      key: ValueKey(gridKey),
+      key: PageStorageKey('grid_$storageKey'),
       crossAxisCount: 2,
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,

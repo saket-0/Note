@@ -2,9 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../shared/database/app_database.dart';
-import '../../../shared/cache/cache_service.dart';
-import '../../dashboard/providers/dashboard_state.dart';
+import '../../../shared/data/data_repository.dart';
+import '../../../shared/domain/entities/entities.dart';
 import '../models/checklist_item.dart';
 import '../utils/history_stack.dart';
 import 'rich_text_controller.dart';
@@ -16,24 +15,26 @@ class EditorController {
   final BuildContext context;
   final TextEditingController titleController;
   final RichTextController contentController;
-  final Function(void Function()) setState; 
+  final Function(void Function()) setState;
 
   // State
   int? currentNoteId;
   DateTime createdAt = DateTime.now();
   String? imagePath;
-  List<String> attachedImages = []; 
-  int color = 0; 
+  List<String> attachedImages = [];
+  int color = 0;
   bool isPinned = false;
   bool isChecklist = false;
+  int position = 0;
+  int? folderId;
   List<ChecklistItem> checklistItems = [];
-  
+
   // Logic
   Timer? _saveDebounce;
   Timer? _historyDebounce;
-  // History now stores the serialized JSON string to capture text + formatting spans
   final HistoryStack<String> _history = HistoryStack();
   bool _isInternalChange = false;
+  bool _isSaving = false;  // Prevent concurrent saves
 
   EditorController({
     required this.context,
@@ -43,14 +44,17 @@ class EditorController {
     required this.setState,
   });
 
+  DataRepository get _repo => ref.read(dataRepositoryProvider);
+
   bool get canUndo => _history.canUndo;
   bool get canRedo => _history.canRedo;
 
-  void init(Note? existingNote) {
+  void init(Note? existingNote, int? initialFolderId) {
+    folderId = initialFolderId;
+    
     if (existingNote != null) {
       currentNoteId = existingNote.id;
       titleController.text = existingNote.title;
-      // Load content (JSON or Text) into RichTextController
       contentController.load(existingNote.content);
       
       createdAt = existingNote.createdAt;
@@ -58,17 +62,16 @@ class EditorController {
       color = existingNote.color;
       isPinned = existingNote.isPinned;
       isChecklist = existingNote.isChecklist;
+      position = existingNote.position;
+      folderId = existingNote.folderId;
       attachedImages = List.from(existingNote.images);
 
       if (isChecklist) {
         _parseContentToChecklist();
       }
     }
-    
-    // Initial History State
-    _history.push(contentController.serialize());
 
-    // Setup listeners
+    _history.push(contentController.serialize());
     titleController.addListener(_onTitleChanged);
     contentController.addListener(_onContentChanged);
   }
@@ -85,13 +88,10 @@ class EditorController {
   void _onContentChanged() {
     if (_isInternalChange) return;
 
-    // Schedule Save
     _scheduleSave();
 
-    // Schedule History Push
     if (_historyDebounce?.isActive ?? false) _historyDebounce!.cancel();
     _historyDebounce = Timer(const Duration(milliseconds: 500), () {
-      // Serialize current state (text + spans)
       final currentState = contentController.serialize();
       _history.push(currentState);
       setState(() {});
@@ -111,7 +111,7 @@ class EditorController {
       final oldState = _history.undo();
       if (oldState != null) {
         contentController.load(oldState);
-        _scheduleSave(); 
+        _scheduleSave();
       }
       _isInternalChange = false;
       setState(() {});
@@ -123,8 +123,8 @@ class EditorController {
       _isInternalChange = true;
       final newState = _history.redo();
       if (newState != null) {
-         contentController.load(newState);
-         _scheduleSave();
+        contentController.load(newState);
+        _scheduleSave();
       }
       _isInternalChange = false;
       setState(() {});
@@ -133,32 +133,32 @@ class EditorController {
 
   void formatBold() {
     contentController.toggleStyle(StyleType.bold);
-    _onContentChanged(); // Force history push
+    _onContentChanged();
   }
 
   void formatItalic() {
     contentController.toggleStyle(StyleType.italic);
-     _onContentChanged();
+    _onContentChanged();
   }
 
   void formatUnderline() {
     contentController.toggleStyle(StyleType.underline);
-     _onContentChanged();
+    _onContentChanged();
   }
 
   void formatH1() {
     contentController.toggleStyle(StyleType.header1);
-     _onContentChanged();
+    _onContentChanged();
   }
 
   void formatH2() {
     contentController.toggleStyle(StyleType.header2);
-     _onContentChanged();
+    _onContentChanged();
   }
 
   void clearFormatting() {
     contentController.clearFormatting();
-     _onContentChanged();
+    _onContentChanged();
   }
 
   void _parseContentToChecklist() {
@@ -167,10 +167,10 @@ class EditorController {
 
   void syncChecklistToContent() {
     String content = ChecklistUtils.toContent(checklistItems);
-    
+
     if (contentController.text != content) {
       _isInternalChange = true;
-      contentController.text = content; 
+      contentController.text = content;
       _isInternalChange = false;
       _history.push(contentController.serialize());
     }
@@ -182,9 +182,9 @@ class EditorController {
       isChecklist = !isChecklist;
       if (isChecklist) {
         if (contentController.text.trim().isNotEmpty) {
-           _parseContentToChecklist();
+          _parseContentToChecklist();
         } else {
-           checklistItems = [ChecklistItem(isChecked: false, text: "")];
+          checklistItems = [ChecklistItem(isChecked: false, text: '')];
         }
       } else {
         contentController.text = ChecklistUtils.toContent(checklistItems);
@@ -207,22 +207,25 @@ class EditorController {
     }
   }
 
-  Future<Note?> saveNote({int? folderId}) async {
+  Future<Note?> saveNote() async {
+    // Prevent concurrent saves
+    if (_isSaving) return null;
+    _isSaving = true;
+    
     try {
       final title = titleController.text.trim();
-      // SAVE SERIALIZED CONTENT to preserve diffs/spans
       final content = contentController.serialize();
 
-      if (title.isEmpty && contentController.text.isEmpty && currentNoteId == null && attachedImages.isEmpty) return null;
-
-      final db = ref.read(dbProvider);
-      final cache = ref.read(cacheServiceProvider);
+      if (title.isEmpty && contentController.text.isEmpty && currentNoteId == null && attachedImages.isEmpty) {
+        _isSaving = false;
+        return null;
+      }
 
       if (currentNoteId != null && currentNoteId! > 0) {
-        // UPDATE existing note (has real DB ID)
+        // UPDATE existing note
         final updatedNote = Note(
           id: currentNoteId!,
-          title: title,
+          title: title.isEmpty ? 'Untitled' : title,
           content: content,
           imagePath: imagePath,
           images: attachedImages,
@@ -232,23 +235,33 @@ class EditorController {
           color: color,
           isPinned: isPinned,
           isChecklist: isChecklist,
-          position: 0,
+          position: position,
         );
-        
-        // Cache-first update for instant UI
-        cache.updateNote(updatedNote);
-        ref.read(refreshTriggerProvider.notifier).state++;
-        
-        // Background DB update (fire-and-forget)
-        db.updateNote(updatedNote);
+
+        await _repo.updateNote(updatedNote);
+        _isSaving = false;
         return updatedNote;
         
       } else {
-        // CREATE new note optimistically
-        final tempId = currentNoteId ?? cache.generateTempId();
-        final tempNote = Note(
-          id: tempId,
-          title: title.isEmpty ? "Untitled Note" : title,
+        // CREATE new note
+        final realId = await _repo.createNote(
+          title: title.isEmpty ? 'Untitled' : title,
+          content: content,
+          imagePath: imagePath,
+          images: attachedImages,
+          fileType: 'rich_text',
+          folderId: folderId,
+          color: color,
+          isPinned: isPinned,
+          isChecklist: isChecklist,
+        );
+        
+        currentNoteId = realId;
+        _isSaving = false;
+        
+        return Note(
+          id: realId,
+          title: title.isEmpty ? 'Untitled' : title,
           content: content,
           imagePath: imagePath,
           images: attachedImages,
@@ -258,47 +271,23 @@ class EditorController {
           color: color,
           isPinned: isPinned,
           isChecklist: isChecklist,
-          position: 999,
+          position: position,
         );
-        
-        // Add to cache IMMEDIATELY for instant display
-        if (currentNoteId == null) {
-          cache.addNoteOptimistic(tempNote);
-          currentNoteId = tempId;
-        } else {
-          cache.updateNote(tempNote);
-        }
-        ref.read(refreshTriggerProvider.notifier).state++;
-        
-        // Persist to DB in background (fire-and-forget)
-        db.createNote(
-          title: tempNote.title,
-          content: content,
-          imagePath: imagePath,
-          images: attachedImages,
-          fileType: 'rich_text',
-          folderId: folderId,
-          color: color,
-          isPinned: isPinned,
-          isChecklist: isChecklist,
-        ).then((realId) {
-          cache.resolveTempId(tempId, realId, isFolder: false);
-          currentNoteId = realId; // Update for future saves
-        });
-        
-        return tempNote;
       }
     } catch (e) {
       debugPrint('Error saving note: $e');
+      _isSaving = false;
       return null;
     }
   }
 
   Future<void> deleteNote() async {
     if (currentNoteId != null) {
-      final db = ref.read(dbProvider);
-      await db.deleteNote(currentNoteId!);
+      // Cache-first delete via repository
+      await _repo.deleteNote(currentNoteId!, permanent: false);
     }
-    Navigator.pop(context);
+    if (context.mounted) {
+      Navigator.pop(context);
+    }
   }
 }

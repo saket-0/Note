@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-// IMPORTS: Feature-First structure
 import 'features/dashboard/dashboard_screen.dart';
-import 'core/cache/cache_service.dart';
-import 'core/database/app_database.dart';
+import 'shared/data/data_repository.dart';
 
 void main() {
   runApp(const ProviderScope(child: DsaCaptureApp()));
@@ -18,15 +16,14 @@ class DsaCaptureApp extends ConsumerStatefulWidget {
 }
 
 class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
-  late Future<void> _cacheLoadFuture;
+  late Future<void> _initFuture;
 
   @override
   void initState() {
     super.initState();
-    // MEMORY-FIRST ARCHITECTURE: Load ALL data into cache at startup
-    final cache = ref.read(cacheServiceProvider);
-    final db = ref.read(dbProvider);
-    _cacheLoadFuture = cache.load(db);
+    // Initialize DataRepository (loads cache from DB)
+    final repo = ref.read(dataRepositoryProvider);
+    _initFuture = repo.initialize();
   }
 
   @override
@@ -36,39 +33,35 @@ class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF8AB4F8), // Google Blue
+          seedColor: const Color(0xFF8AB4F8),
           brightness: Brightness.dark,
-          surface: const Color(0xFF202124), // Google Dark Background
-          background: const Color(0xFF202124),
+          surface: const Color(0xFF202124),
           primary: const Color(0xFF8AB4F8),
-          secondary: const Color(0xFFE8EAED), // White/Grey Text/Icon
+          secondary: const Color(0xFFE8EAED),
         ),
         useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFF202124), // Solid Google Dark
-        cardColor: const Color(0xFF525355), // Lighter grey for elements
+        scaffoldBackgroundColor: const Color(0xFF202124),
+        cardColor: const Color(0xFF525355),
         appBarTheme: const AppBarTheme(
           centerTitle: true,
           elevation: 0,
-          backgroundColor: Color(0xFF202124), // Match background
+          backgroundColor: Color(0xFF202124),
           scrolledUnderElevation: 0,
         ),
         floatingActionButtonTheme: const FloatingActionButtonThemeData(
-          backgroundColor: Color(0xFF303134), // Slightly lighter than background
-          foregroundColor: Color(0xFF8AB4F8), // Blue Accent
+          backgroundColor: Color(0xFF303134),
+          foregroundColor: Color(0xFF8AB4F8),
           elevation: 4,
         ),
       ),
       home: FutureBuilder<void>(
-        future: _cacheLoadFuture,
+        future: _initFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.done) {
             return const DashboardScreen();
           }
-          // Minimal splash while cache loads (usually < 100ms)
           return const Scaffold(
-            body: Center(
-              child: CircularProgressIndicator(),
-            ),
+            body: Center(child: CircularProgressIndicator()),
           );
         },
       ),

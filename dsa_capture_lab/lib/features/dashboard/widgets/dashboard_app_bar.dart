@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/cache/cache_service.dart';
-import '../../../core/database/app_database.dart';
+import '../../../shared/data/data_repository.dart';
+import '../../../shared/domain/entities/entities.dart';
 import '../controllers/dashboard_controller.dart';
 import '../providers/dashboard_state.dart';
 
@@ -71,16 +71,16 @@ class DashboardAppBar extends ConsumerWidget implements PreferredSizeWidget {
                 borderRadius: BorderRadius.circular(24),
                 onTap: () {
                   final current = ref.read(viewModeProvider);
-                  ref.read(viewModeProvider.notifier).state = 
+                  ref.read(viewModeProvider.notifier).state =
                       current == ViewMode.grid ? ViewMode.list : ViewMode.grid;
                 },
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Icon(
-                    ref.watch(viewModeProvider) == ViewMode.grid 
-                        ? Icons.view_agenda_outlined 
+                    ref.watch(viewModeProvider) == ViewMode.grid
+                        ? Icons.view_agenda_outlined
                         : Icons.grid_view,
-                    color: Colors.white70, 
+                    color: Colors.white70,
                     size: 24,
                   ),
                 ),
@@ -91,7 +91,7 @@ class DashboardAppBar extends ConsumerWidget implements PreferredSizeWidget {
       ),
       backgroundColor: Colors.transparent,
       elevation: 0,
-      leading: isRoot 
+      leading: isRoot
           ? const SizedBox.shrink()
           : DragTarget<String>(
               onAccept: (key) => controller.moveItemToParent(key),
@@ -100,7 +100,7 @@ class DashboardAppBar extends ConsumerWidget implements PreferredSizeWidget {
                 return IconButton(
                   icon: Icon(
                     Icons.arrow_back,
-                    color: isHovering ? Colors.tealAccent : Colors.white, 
+                    color: isHovering ? Colors.tealAccent : Colors.white,
                     size: isHovering ? 28 : 24,
                   ),
                   onPressed: () => controller.navigateUp(currentFolderId!),
@@ -112,10 +112,10 @@ class DashboardAppBar extends ConsumerWidget implements PreferredSizeWidget {
   }
 
   void _showSearchDialog(BuildContext context, WidgetRef ref) {
-    final cache = ref.read(cacheServiceProvider);
-    final allNotes = cache.getAllNotes();
+    final repo = ref.read(dataRepositoryProvider);
+    final allNotes = repo.getAllNotes();
     final searchController = TextEditingController();
-    
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -126,13 +126,14 @@ class DashboardAppBar extends ConsumerWidget implements PreferredSizeWidget {
       builder: (ctx) => StatefulBuilder(
         builder: (context, setState) {
           final query = searchController.text.toLowerCase();
-          final filtered = query.isEmpty 
-              ? <Note>[] 
-              : allNotes.where((n) => 
-                  n.title.toLowerCase().contains(query) || 
-                  n.content.toLowerCase().contains(query)
-                ).toList();
-          
+          final filtered = query.isEmpty
+              ? <Note>[]
+              : allNotes
+                  .where((n) =>
+                      n.title.toLowerCase().contains(query) ||
+                      n.content.toLowerCase().contains(query))
+                  .toList();
+
           return DraggableScrollableSheet(
             initialChildSize: 0.9,
             maxChildSize: 0.95,
@@ -183,22 +184,19 @@ class DashboardAppBar extends ConsumerWidget implements PreferredSizeWidget {
                         )
                       : ListView.builder(
                           controller: scrollController,
-                          itemCount: query.isEmpty ? (allNotes.length > 5 ? 5 : allNotes.length) : filtered.length,
+                          itemCount: query.isEmpty
+                              ? (allNotes.length > 5 ? 5 : allNotes.length)
+                              : filtered.length,
                           itemBuilder: (_, i) {
-                            // If query empty, show recent (allNotes is already sorted by date in CacheService if I recall? 
-                            // Wait, CacheService.getAllNotes() returns flat list. I should sort it here to be safe for "Recent").
-                            
-                            // Let's sort locally for now if not already. 
-                            // Actually, let's just use filtered list logic.
-                            
                             List<Note> displayList;
                             if (query.isEmpty) {
-                               displayList = List.from(allNotes)..sort((a,b) => b.createdAt.compareTo(a.createdAt));
-                               displayList = displayList.take(5).toList();
+                              displayList = List.from(allNotes)
+                                ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+                              displayList = displayList.take(5).toList();
                             } else {
-                               displayList = filtered;
+                              displayList = filtered;
                             }
-                            
+
                             if (displayList.isEmpty) return const SizedBox.shrink();
 
                             final note = displayList[i];
@@ -212,8 +210,8 @@ class DashboardAppBar extends ConsumerWidget implements PreferredSizeWidget {
                                 style: const TextStyle(color: Colors.white),
                               ),
                               subtitle: Text(
-                                note.content.isEmpty 
-                                    ? 'No content' 
+                                note.content.isEmpty
+                                    ? 'No content'
                                     : note.content.substring(0, note.content.length.clamp(0, 50)),
                                 style: TextStyle(color: Colors.white.withOpacity(0.6)),
                                 maxLines: 1,

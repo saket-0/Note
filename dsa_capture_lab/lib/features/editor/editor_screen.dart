@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/database/app_database.dart';
+import '../../shared/domain/entities/entities.dart';
 import 'controllers/editor_controller.dart';
 import 'models/checklist_item.dart';
 import 'widgets/editor_app_bar.dart';
@@ -58,7 +58,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         if (mounted) setState(fn);
       }
     );
-    _controller.init(widget.existingNote);
+    _controller.init(widget.existingNote, widget.folderId);
   }
 
   @override
@@ -183,7 +183,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
          if (didPop) return;
-         await _controller.saveNote(folderId: widget.folderId);
+         await _controller.saveNote();
          if (mounted) {
            Navigator.pop(context);
          }
@@ -197,7 +197,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
           isChecklist: _controller.isChecklist,
           onPinToggle: () {
             setState(() => _controller.isPinned = !_controller.isPinned);
-            _controller.saveNote(folderId: widget.folderId);
+            _controller.saveNote();
           },
           onChecklistToggle: _controller.toggleChecklistMode,
           onDelete: _controller.deleteNote,
@@ -215,7 +215,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                 createdAt: _controller.createdAt,
                 onImageRemove: (index) {
                   setState(() => _controller.attachedImages.removeAt(index));
-                  _controller.saveNote(folderId: widget.folderId);
+                  _controller.saveNote();
                 },
                 onChecklistItemChanged: (index, val) {
                   _controller.checklistItems[index].text = val;

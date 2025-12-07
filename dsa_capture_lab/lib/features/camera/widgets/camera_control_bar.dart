@@ -1,7 +1,5 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import '../../../../core/database/app_database.dart'; 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class CameraControlBar extends StatelessWidget {
   final bool isBatchMode;

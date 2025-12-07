@@ -3,13 +3,15 @@ import 'package:path/path.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/entities/entities.dart';
 
-// Re-export entities for backward compatibility with existing imports
 export '../domain/entities/entities.dart';
 
-// --- Database Helper ---
-
+/// Optimized Database Layer with:
+/// - Batch image loading (eliminates N+1)
+/// - Indexed queries for fast lookups
+/// - Transaction support for atomic operations
 class AppDatabase {
   static Database? _database;
+  static const String _dbName = 'dsa_notes_v4.db'; // New DB version for clean slate
 
   Future<Database> get database async {
     if (_database != null) return _database!;
@@ -19,7 +21,7 @@ class AppDatabase {
 
   Future<Database> _initDB() async {
     final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'dsa_notes_v3.db'); 
+    final path = join(dbPath, _dbName);
 
     return await openDatabase(
       path,
@@ -64,155 +66,115 @@ class AppDatabase {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             note_id INTEGER NOT NULL,
             image_path TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
+            position INTEGER DEFAULT 0,
             FOREIGN KEY (note_id) REFERENCES notes (id) ON DELETE CASCADE
           )
         ''');
+
+        // === PERFORMANCE INDEXES ===
+        await db.execute('CREATE INDEX idx_folders_parent ON folders(parent_id)');
+        await db.execute('CREATE INDEX idx_folders_state ON folders(is_archived, is_deleted)');
+        await db.execute('CREATE INDEX idx_notes_folder ON notes(folder_id)');
+        await db.execute('CREATE INDEX idx_notes_state ON notes(is_archived, is_deleted)');
+        await db.execute('CREATE INDEX idx_note_images_note ON note_images(note_id)');
       },
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
-      },
-      onOpen: (db) async {
-        // Auto-migrations
-        final tables = ['notes', 'folders'];
-        for (var table in tables) {
-           try { await db.query(table, columns: ['is_archived'], limit: 1); } 
-           catch (_) { await db.execute('ALTER TABLE $table ADD COLUMN is_archived INTEGER DEFAULT 0'); }
-
-           try { await db.query(table, columns: ['is_deleted'], limit: 1); } 
-           catch (_) { await db.execute('ALTER TABLE $table ADD COLUMN is_deleted INTEGER DEFAULT 0'); }
-        }
-
-        try { await db.query('notes', columns: ['file_type'], limit: 1); } 
-        catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN file_type TEXT DEFAULT \'text\''); }
-
-        try { await db.query('folders', columns: ['position'], limit: 1); } 
-        catch (_) { await db.execute('ALTER TABLE folders ADD COLUMN position INTEGER DEFAULT 0'); }
-
-        try { await db.query('notes', columns: ['position'], limit: 1); } 
-        catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN position INTEGER DEFAULT 0'); }
-
-        try { await db.query('notes', columns: ['color'], limit: 1); } 
-        catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN color INTEGER DEFAULT 0'); }
-
-        try { await db.query('notes', columns: ['is_pinned'], limit: 1); } 
-        catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN is_pinned INTEGER DEFAULT 0'); }
-
-         try { await db.query('notes', columns: ['is_checklist'], limit: 1); } 
-        catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN is_checklist INTEGER DEFAULT 0'); }
-
-        // Create note_images table if not exists
-        final imagesTable = await db.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='note_images'");
-        if (imagesTable.isEmpty) {
-           await db.execute('''
-            CREATE TABLE note_images(
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              note_id INTEGER NOT NULL,
-              image_path TEXT NOT NULL,
-              created_at INTEGER NOT NULL,
-              FOREIGN KEY (note_id) REFERENCES notes (id) ON DELETE CASCADE
-            )
-          ''');
-        }
+        // Performance tuning
+        await db.rawQuery('PRAGMA journal_mode = WAL');
+        await db.rawQuery('PRAGMA synchronous = NORMAL');
+        await db.rawQuery('PRAGMA cache_size = 10000');
       },
     );
   }
 
-  Future<List<String>> _fetchImagesForNote(int noteId) async {
-     final db = await database;
-     final imgMaps = await db.query('note_images', where: 'note_id = ?', whereArgs: [noteId]);
-     return imgMaps.map((i) => i['image_path'] as String).toList();
-  }
+  // ===========================================
+  // BATCH LOADING (Eliminates N+1 Queries)
+  // ===========================================
 
-  // --- CRUD for Folders ---
-  
-  Future<Note?> getNote(int id) async {
+  /// Load ALL notes with images in a single query batch
+  Future<List<Note>> getAllNotes() async {
     final db = await database;
-    final List<Map<String, dynamic>> maps = await db.query(
+    
+    // Step 1: Get all notes
+    final noteMaps = await db.query(
       'notes',
-      where: 'id = ?',
-      whereArgs: [id],
+      orderBy: 'is_pinned DESC, position ASC, created_at DESC',
     );
-    if (maps.isEmpty) return null;
     
-    List<String> images = [];
-    if (maps.first['file_type'] == 'text') {
-       images = await _fetchImagesForNote(id);
+    if (noteMaps.isEmpty) return [];
+    
+    // Step 2: Get ALL images in one query
+    final allImages = await db.query('note_images', orderBy: 'note_id, position ASC');
+    
+    // Step 3: Group images by note_id in memory (O(n) instead of N queries)
+    final imagesByNote = <int, List<String>>{};
+    for (final img in allImages) {
+      final noteId = img['note_id'] as int;
+      imagesByNote.putIfAbsent(noteId, () => []).add(img['image_path'] as String);
     }
     
-    return Note.fromMap(maps.first, images: images);
-  }
-  
-  Future<int> createFolder(String name, int? parentId) async {
-    final db = await database;
-    final List<Map<String, dynamic>> result = await db.rawQuery(
-      'SELECT MAX(position) as maxPos FROM folders WHERE parent_id ${parentId == null ? "IS NULL" : "= ?"} AND is_deleted = 0 AND is_archived = 0',
-      parentId == null ? [] : [parentId]
-    );
-    int maxPos = (result.first['maxPos'] as int?) ?? -1;
-
-    return await db.insert('folders', {
-      'name': name,
-      'parent_id': parentId,
-      'created_at': DateTime.now().millisecondsSinceEpoch,
-      'position': maxPos + 1,
-    });
+    // Step 4: Build Note objects with images
+    return noteMaps.map((m) {
+      final noteId = m['id'] as int;
+      return Note.fromMap(m, images: imagesByNote[noteId] ?? []);
+    }).toList();
   }
 
-  Future<List<Folder>> getFolders(int? parentId, {bool showArchived = false, bool showDeleted = false}) async {
-    final db = await database;
-    String whereClause;
-    List<Object?> args;
-
-    if (showDeleted) {
-      whereClause = 'is_deleted = 1';
-      args = [];
-    } else if (showArchived) {
-      whereClause = 'is_archived = 1 AND is_deleted = 0';
-      args = [];
-    } else {
-      whereClause = '(parent_id ${parentId == null ? "IS NULL" : "= ?"}) AND is_archived = 0 AND is_deleted = 0';
-      args = parentId == null ? [] : [parentId];
-    }
-    
-    final maps = await db.query(
-      'folders',
-      where: whereClause,
-      whereArgs: args,
-      orderBy: 'position ASC, name ASC',
-    );
-    return maps.map((e) => Folder.fromMap(e)).toList();
-  }
-  
-  /// Get ALL folders from database (for cache loading)
+  /// Load ALL folders in a single query
   Future<List<Folder>> getAllFolders() async {
     final db = await database;
     final maps = await db.query('folders', orderBy: 'position ASC, name ASC');
     return maps.map((e) => Folder.fromMap(e)).toList();
   }
-  
-  /// Get ALL notes from database (for cache loading)
-  Future<List<Note>> getAllNotes() async {
+
+  // ===========================================
+  // TRANSACTION SUPPORT
+  // ===========================================
+
+  /// Run multiple operations atomically
+  Future<T> runInTransaction<T>(Future<T> Function(Transaction txn) action) async {
     final db = await database;
-    final maps = await db.query('notes', orderBy: 'is_pinned DESC, position ASC, created_at DESC');
-    
-    List<Note> notes = [];
-    for (var m in maps) {
-       final noteId = m['id'] as int;
-       final imgMaps = await db.query('note_images', where: 'note_id = ?', whereArgs: [noteId]);
-       final images = imgMaps.map((i) => i['image_path'] as String).toList();
-       notes.add(Note.fromMap(m, images: images));
-    }
-    return notes;
+    return await db.transaction(action);
   }
-  
+
+  // ===========================================
+  // FOLDER OPERATIONS
+  // ===========================================
+
+  Future<int> createFolder(String name, int? parentId, {int? position}) async {
+    final db = await database;
+    
+    final finalPos = position ?? await _getNextPosition(db, 'folders', 'parent_id', parentId);
+
+    return await db.insert('folders', {
+      'name': name,
+      'parent_id': parentId,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+      'position': finalPos,
+    });
+  }
+
   Future<Folder?> getFolder(int id) async {
     final db = await database;
     final maps = await db.query('folders', where: 'id = ?', whereArgs: [id]);
-    if (maps.isNotEmpty) {
-      return Folder.fromMap(maps.first);
-    }
-    return null;
+    return maps.isNotEmpty ? Folder.fromMap(maps.first) : null;
+  }
+
+  Future<void> updateFolder(Folder folder) async {
+    final db = await database;
+    await db.update(
+      'folders',
+      {
+        'name': folder.name,
+        'parent_id': folder.parentId,
+        'position': folder.position,
+        'is_archived': folder.isArchived ? 1 : 0,
+        'is_deleted': folder.isDeleted ? 1 : 0,
+      },
+      where: 'id = ?',
+      whereArgs: [folder.id],
+    );
   }
 
   Future<void> updateFolderPosition(int id, int newPosition) async {
@@ -223,97 +185,101 @@ class AppDatabase {
   Future<int> deleteFolder(int id, {bool permanent = false}) async {
     final db = await database;
     if (permanent) {
-       return await db.delete('folders', where: 'id = ?', whereArgs: [id]);
+      return await db.delete('folders', where: 'id = ?', whereArgs: [id]);
     } else {
-       return await db.update('folders', {'is_deleted': 1}, where: 'id = ?', whereArgs: [id]);
+      return await db.update('folders', {'is_deleted': 1}, where: 'id = ?', whereArgs: [id]);
     }
   }
 
-  // --- CRUD for Notes/Files ---
+  // ===========================================
+  // NOTE OPERATIONS
+  // ===========================================
 
   Future<int> createNote({
     required String title,
     required String content,
     String? imagePath,
-    List<String> images = const [], 
+    List<String> images = const [],
     String fileType = 'text',
     int? folderId,
     int color = 0,
     bool isPinned = false,
     bool isChecklist = false,
+    int? position,
   }) async {
     final db = await database;
-    final List<Map<String, dynamic>> result = await db.rawQuery(
-      'SELECT MAX(position) as maxPos FROM notes WHERE folder_id ${folderId == null ? "IS NULL" : "= ?"} AND is_deleted = 0 AND is_archived = 0',
-      folderId == null ? [] : [folderId]
-    );
-    int maxPos = (result.first['maxPos'] as int?) ?? -1;
+    
+    return await db.transaction((txn) async {
+      final finalPos = position ?? await _getNextPositionTxn(txn, 'notes', 'folder_id', folderId);
 
-    final noteId = await db.insert('notes', {
-      'title': title,
-      'content': content,
-      'image_path': imagePath,
-      'file_type': fileType,
-      'folder_id': folderId,
-      'created_at': DateTime.now().millisecondsSinceEpoch,
-      'position': maxPos + 1,
-      'color': color,
-      'is_pinned': isPinned ? 1 : 0,
-      'is_checklist': isChecklist ? 1 : 0,
-    });
-
-    // Insert Images
-    for (String path in images) {
-      await db.insert('note_images', {
-        'note_id': noteId,
-        'image_path': path,
+      final noteId = await txn.insert('notes', {
+        'title': title,
+        'content': content,
+        'image_path': imagePath,
+        'file_type': fileType,
+        'folder_id': folderId,
         'created_at': DateTime.now().millisecondsSinceEpoch,
+        'position': finalPos,
+        'color': color,
+        'is_pinned': isPinned ? 1 : 0,
+        'is_checklist': isChecklist ? 1 : 0,
       });
-    }
 
-    return noteId;
+      // Insert images atomically
+      for (int i = 0; i < images.length; i++) {
+        await txn.insert('note_images', {
+          'note_id': noteId,
+          'image_path': images[i],
+          'position': i,
+        });
+      }
+
+      return noteId;
+    });
+  }
+
+  Future<Note?> getNote(int id) async {
+    final db = await database;
+    final maps = await db.query('notes', where: 'id = ?', whereArgs: [id]);
+    if (maps.isEmpty) return null;
+
+    final images = await db.query('note_images', where: 'note_id = ?', whereArgs: [id], orderBy: 'position ASC');
+    return Note.fromMap(maps.first, images: images.map((i) => i['image_path'] as String).toList());
   }
 
   Future<int> updateNote(Note note) async {
     final db = await database;
     
-    // Update basic fields
-    await db.update(
-      'notes',
-      {
-        'title': note.title,
-        'content': note.content,
-        'color': note.color,
-        'is_pinned': note.isPinned ? 1 : 0,
-        'is_checklist': note.isChecklist ? 1 : 0,
-        'is_archived': note.isArchived ? 1 : 0,
-        'is_deleted': note.isDeleted ? 1 : 0,
-      },
-      where: 'id = ?',
-      whereArgs: [note.id],
-    );
+    return await db.transaction((txn) async {
+      await txn.update(
+        'notes',
+        {
+          'title': note.title,
+          'content': note.content,
+          'color': note.color,
+          'is_pinned': note.isPinned ? 1 : 0,
+          'is_checklist': note.isChecklist ? 1 : 0,
+          'is_archived': note.isArchived ? 1 : 0,
+          'is_deleted': note.isDeleted ? 1 : 0,
+          'position': note.position,
+          'folder_id': note.folderId,
+        },
+        where: 'id = ?',
+        whereArgs: [note.id],
+      );
 
-    // Sync Images
-    await db.delete('note_images', where: 'note_id = ?', whereArgs: [note.id]);
-    for (String path in note.images) {
-      await db.insert('note_images', {
-        'note_id': note.id,
-        'image_path': path,
-        'created_at': DateTime.now().millisecondsSinceEpoch,
-      });
-    }
+      // Sync images atomically
+      await txn.delete('note_images', where: 'note_id = ?', whereArgs: [note.id]);
+      for (int i = 0; i < note.images.length; i++) {
+        await txn.insert('note_images', {
+          'note_id': note.id,
+          'image_path': note.images[i],
+          'position': i,
+        });
+      }
 
-    return note.id;
-  }
-  
-  Future<int> moveNote(int noteId, int targetFolderId) async {
-    final db = await database;
-    return await db.update(
-      'notes',
-      {'folder_id': targetFolderId},
-      where: 'id = ?',
-      whereArgs: [noteId],
-    );
+      return note.id;
+    });
   }
 
   Future<void> updateNotePosition(int id, int newPosition) async {
@@ -321,13 +287,41 @@ class AppDatabase {
     await db.update('notes', {'position': newPosition}, where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<int> moveNote(int noteId, int? targetFolderId, {int? newPosition}) async {
+    final db = await database;
+    final updates = <String, Object?>{'folder_id': targetFolderId};
+    if (newPosition != null) {
+      updates['position'] = newPosition;
+    }
+    return await db.update('notes', updates, where: 'id = ?', whereArgs: [noteId]);
+  }
+
+  Future<int> moveFolder(int folderId, int? targetParentId, {int? newPosition}) async {
+    final db = await database;
+    final updates = <String, Object?>{'parent_id': targetParentId};
+    if (newPosition != null) {
+      updates['position'] = newPosition;
+    }
+    return await db.update('folders', updates, where: 'id = ?', whereArgs: [folderId]);
+  }
+
   Future<int> deleteNote(int id, {bool permanent = false}) async {
     final db = await database;
-     if (permanent) {
+    if (permanent) {
       return await db.delete('notes', where: 'id = ?', whereArgs: [id]);
     } else {
       return await db.update('notes', {'is_deleted': 1}, where: 'id = ?', whereArgs: [id]);
     }
+  }
+
+  // ===========================================
+  // STATE OPERATIONS (Archive/Restore/Trash)
+  // ===========================================
+
+  Future<void> archiveItem(int id, String type, bool archive) async {
+    final db = await database;
+    final table = type == 'folder' ? 'folders' : 'notes';
+    await db.update(table, {'is_archived': archive ? 1 : 0}, where: 'id = ?', whereArgs: [id]);
   }
 
   Future<void> restoreItem(int id, String type) async {
@@ -335,51 +329,42 @@ class AppDatabase {
     final table = type == 'folder' ? 'folders' : 'notes';
     await db.update(table, {'is_deleted': 0, 'is_archived': 0}, where: 'id = ?', whereArgs: [id]);
   }
-  
-  Future<void> archiveItem(int id, String type, bool archive) async {
-     final db = await database;
-    final table = type == 'folder' ? 'folders' : 'notes';
-    await db.update(table, {'is_archived': archive ? 1 : 0}, where: 'id = ?', whereArgs: [id]);
+
+  // ===========================================
+  // BATCH POSITION UPDATES
+  // ===========================================
+
+  /// Update positions for multiple items in one transaction
+  Future<void> updatePositions(List<({String type, int id, int position})> updates) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final u in updates) {
+        final table = u.type == 'folder' ? 'folders' : 'notes';
+        await txn.update(table, {'position': u.position}, where: 'id = ?', whereArgs: [u.id]);
+      }
+    });
   }
 
-  Future<List<Note>> getNotes(int? folderId, {bool showArchived = false, bool showDeleted = false}) async {
-    final db = await database;
-    String whereClause;
-    List<Object?> args;
+  // ===========================================
+  // HELPERS
+  // ===========================================
 
-    if (showDeleted) {
-      whereClause = 'is_deleted = 1';
-      args = [];
-    } else if (showArchived) {
-      whereClause = 'is_archived = 1 AND is_deleted = 0';
-      args = [];
-    } else {
-      whereClause = '(folder_id ${folderId == null ? "IS NULL" : "= ?"}) AND is_archived = 0 AND is_deleted = 0';
-      args = folderId == null ? [] : [folderId];
-    }
-
-    final maps = await db.query(
-      'notes',
-      where: whereClause,
-      whereArgs: args,
-      orderBy: 'is_pinned DESC, position ASC, created_at DESC', 
+  Future<int> _getNextPosition(Database db, String table, String parentCol, int? parentId) async {
+    final result = await db.rawQuery(
+      'SELECT MAX(position) as maxPos FROM $table WHERE $parentCol ${parentId == null ? "IS NULL" : "= ?"} AND is_deleted = 0 AND is_archived = 0',
+      parentId == null ? [] : [parentId],
     );
-    
-    List<Note> notes = [];
-    for (var m in maps) {
-       final noteId = m['id'] as int;
-       final imgMaps = await db.query('note_images', where: 'note_id = ?', whereArgs: [noteId]);
-       final images = imgMaps.map((i) => i['image_path'] as String).toList();
-       
-       notes.add(Note.fromMap(m, images: images));
-    }
+    return ((result.first['maxPos'] as int?) ?? -1) + 1;
+  }
 
-    return notes;
+  Future<int> _getNextPositionTxn(Transaction txn, String table, String parentCol, int? parentId) async {
+    final result = await txn.rawQuery(
+      'SELECT MAX(position) as maxPos FROM $table WHERE $parentCol ${parentId == null ? "IS NULL" : "= ?"} AND is_deleted = 0 AND is_archived = 0',
+      parentId == null ? [] : [parentId],
+    );
+    return ((result.first['maxPos'] as int?) ?? -1) + 1;
   }
 }
 
 // --- Provider ---
-
-final dbProvider = Provider<AppDatabase>((ref) {
-  return AppDatabase();
-});
+final dbProvider = Provider<AppDatabase>((ref) => AppDatabase());
