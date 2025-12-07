@@ -7,7 +7,9 @@ class DashboardGridItem extends StatefulWidget {
   final List<dynamic> allItems;
   final Function(String key, String zone) onDrop;
   final VoidCallback onTap;
-  final VoidCallback onDelete; // Added
+  final VoidCallback onDelete;
+  final Function(bool) onArchive; 
+  final VoidCallback onRestore;
 
   const DashboardGridItem({
     super.key,
@@ -16,6 +18,8 @@ class DashboardGridItem extends StatefulWidget {
     required this.onDrop,
     required this.onTap,
     required this.onDelete,
+    required this.onArchive,
+    required this.onRestore,
   });
 
   @override
@@ -332,20 +336,55 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
                 color: (item is Note && item.color != 0) ? Colors.black54 : Colors.white70
               ),
               onSelected: (value) {
-                if (value == 'delete') widget.onDelete();
+                if (value == 'delete') {
+                  widget.onDelete();
+                } else if (value == 'archive') {
+                  widget.onArchive(true);
+                } else if (value == 'unarchive') {
+                  widget.onArchive(false);
+                } else if (value == 'restore') {
+                  widget.onRestore();
+                }
               },
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 'delete',
-                  child: Row(
-                    children: [
-                      Icon(Icons.delete, color: Colors.red),
-                      SizedBox(width: 8),
-                      Text("Delete"),
-                    ],
+              itemBuilder: (context) {
+                final bool isArchived = (item is Folder) ? item.isArchived : (item as Note).isArchived;
+                final bool isDeleted = (item is Folder) ? item.isDeleted : (item as Note).isDeleted;
+
+                return [
+                  if (!isDeleted) 
+                    PopupMenuItem(
+                      value: isArchived ? 'unarchive' : 'archive',
+                      child: Row(
+                        children: [
+                          Icon(isArchived ? Icons.unarchive : Icons.archive, color: Colors.blueGrey),
+                          const SizedBox(width: 8),
+                          Text(isArchived ? "Unarchive" : "Archive"),
+                        ],
+                      ),
+                    ),
+                  if (isDeleted)
+                    const PopupMenuItem(
+                      value: 'restore',
+                      child: Row(
+                        children: [
+                          Icon(Icons.restore_from_trash, color: Colors.green),
+                          SizedBox(width: 8),
+                          Text("Restore"),
+                        ],
+                      ),
+                    ),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        const Icon(Icons.delete, color: Colors.red),
+                        const SizedBox(width: 8),
+                        Text(isDeleted ? "Delete Forever" : "Trash"),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ];
+              },
             ),
           )
       ],

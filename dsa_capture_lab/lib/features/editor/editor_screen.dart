@@ -206,7 +206,24 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
             onPressed: () {
                // When going back, if checklist, ensure synced one last time
                if (_isChecklist) _syncChecklistToContent();
-               Navigator.pop(context);
+
+               // Construct return object if saved
+               Note? resultNote;
+               if (_currentNoteId != null) {
+                  resultNote = Note(
+                    id: _currentNoteId!,
+                    title: _titleController.text.trim().isEmpty ? "Untitled Note" : _titleController.text.trim(),
+                    content: _contentController.text.trim(),
+                    imagePath: _imagePath,
+                    images: _attachedImages,
+                    folderId: widget.folderId ?? widget.existingNote?.folderId,
+                    createdAt: _createdAt, 
+                    color: _color,
+                    isPinned: _isPinned,
+                    isChecklist: _isChecklist,
+                  );
+               }
+               Navigator.pop(context, resultNote);
             },
         ),
         backgroundColor: Colors.transparent,

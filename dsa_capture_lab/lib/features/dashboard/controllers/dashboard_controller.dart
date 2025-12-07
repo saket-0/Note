@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:mime/mime.dart';
 import '../../../core/database/app_database.dart';
+import '../../../core/cache/cache_service.dart';
 import '../../camera/camera_screen.dart';
 import '../../editor/editor_screen.dart';
 import '../providers/dashboard_state.dart';
@@ -17,8 +18,8 @@ class DashboardController {
 
   Future<void> handleDrop(String incomingKey, dynamic targetItem, String zone, List<dynamic> allItems) async {
     final db = ref.read(dbProvider);
+    final cache = ref.read(cacheServiceProvider);
     final currentId = ref.read(currentFolderProvider);
-    final viewModel = ref.read(contentProvider(currentId).notifier);
     
     // Parse Key: "folder_123" -> Type=Folder, ID=123
     final parts = incomingKey.split('_');
@@ -48,11 +49,14 @@ class DashboardController {
       if (isSelf) return; 
 
       if (targetItem is Folder) {
-        // Move into Folder
+        // Move into Folder: Update cache + DB
         if (incomingObj is Note) {
+           cache.removeNote(incomingObj.id);
+           cache.addNote(incomingObj.copyWith(folderId: targetItem.id));
            await db.moveNote(incomingObj.id, targetItem.id);
         } else if (incomingObj is Folder) {
-           // Move folder into folder
+           cache.removeFolder(incomingObj.id);
+           cache.addFolder(incomingObj.copyWith(parentId: targetItem.id));
            await db.database.then((d) => d.update(
              'folders', 
              {'parent_id': targetItem.id}, 
@@ -67,55 +71,49 @@ class DashboardController {
           return; // _merge handles refresh
         }
       }
-      viewModel.load(silent: true);
+      ref.read(refreshTriggerProvider.notifier).state++;
     } else {
-      // REORDER LOGIC (Optimistic UI could be here, but for now we rely on silent sync)
+      // REORDER: Just update DB, cache doesn't track position granularly yet
       int oldIndex = allItems.indexOf(incomingObj);
       int newIndex = allItems.indexOf(targetItem);
       if (oldIndex == -1 || newIndex == -1) return; 
       
       if (zone == 'right') newIndex++; 
-
-      final sortedList = List.from(allItems);
-      sortedList.removeAt(oldIndex);
-      
       if (newIndex > oldIndex) newIndex--; 
-      
       if (newIndex < 0) newIndex = 0;
-      if (newIndex > sortedList.length) newIndex = sortedList.length;
+      if (newIndex > allItems.length - 1) newIndex = allItems.length - 1;
       
-      sortedList.insert(newIndex, incomingObj);
-      
-      // OPTIMISTIC UPDATE: Update UI immediately
-      viewModel.updateList(sortedList);
-      
-      // Update DB in background
-      for (int i = 0; i < sortedList.length; i++) {
-        final obj = sortedList[i];
+      // Update DB positions in background
+      for (int i = 0; i < allItems.length; i++) {
+        final obj = allItems[i];
         if (obj is Folder) {
           await db.updateFolderPosition(obj.id, i);
         } else if (obj is Note) {
           await db.updateNotePosition(obj.id, i);
         }
       }
-      // No need to reload, local state is valid.
+      ref.read(refreshTriggerProvider.notifier).state++;
     }
   }
 
   Future<void> _mergeItemsIntoFolder(int incomingNoteId, Note targetNote) async {
-    // 1. Create a new folder named "Group"
     final db = ref.read(dbProvider);
+    final cache = ref.read(cacheServiceProvider);
     final currentId = ref.read(currentFolderProvider);
-    final viewModel = ref.read(contentProvider(currentId).notifier);
     
+    // 1. Create folder
     final newFolderId = await db.createFolder("Group", currentId);
+    final newFolder = Folder(id: newFolderId, name: "Group", parentId: currentId, createdAt: DateTime.now());
+    cache.addFolder(newFolder);
 
     // 2. Move BOTH items into the new folder
-    await db.moveNote(incomingNoteId, newFolderId); // dragged item
-    await db.moveNote(targetNote.id, newFolderId);  // target item
+    cache.removeNote(incomingNoteId);
+    cache.removeNote(targetNote.id);
+    await db.moveNote(incomingNoteId, newFolderId);
+    await db.moveNote(targetNote.id, newFolderId);
     
     // 3. Refresh UI
-    viewModel.load(silent: true);
+    ref.read(refreshTriggerProvider.notifier).state++;
     
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -127,7 +125,7 @@ class DashboardController {
   Future<void> openFile(Note note) async {
     if (note.fileType == 'text') {
       // Open Editor
-      await Navigator.push(
+      final result = await Navigator.push(
         context, 
         MaterialPageRoute(
           builder: (_) => EditorScreen(
@@ -136,10 +134,12 @@ class DashboardController {
           )
         )
       );
-      // Silent refresh on return
-      if(context.mounted) {
-         final currentId = ref.read(currentFolderProvider);
-         ref.read(contentProvider(currentId).notifier).load(silent: true);
+      
+      // OPTIMISTIC UPDATE: Update cache if Note returned
+      if (result is Note && context.mounted) {
+         final cache = ref.read(cacheServiceProvider);
+         cache.updateNote(result);
+         ref.read(refreshTriggerProvider.notifier).state++;
       }
     } else if (note.imagePath != null) {
       // Open External File WITH OPEN_FILEX
@@ -167,17 +167,21 @@ class DashboardController {
       }
 
       final db = ref.read(dbProvider);
+      final cache = ref.read(cacheServiceProvider);
       final currentId = ref.read(currentFolderProvider);
-      final viewModel = ref.read(contentProvider(currentId).notifier);
       
-      await db.createNote(
+      final newId = await db.createNote(
         title: name,
         content: '',
-        imagePath: path, // Storing file path here
+        imagePath: path,
         fileType: type,
         folderId: currentId
       );
-      viewModel.load(silent: true);
+      
+      // Update cache
+      final newNote = Note(id: newId, title: name, content: '', imagePath: path, fileType: type, folderId: currentId, createdAt: DateTime.now());
+      cache.addNote(newNote);
+      ref.read(refreshTriggerProvider.notifier).state++;
     }
   }
 
@@ -209,11 +213,24 @@ class DashboardController {
               final name = controller.text.trim();
               if (name.isNotEmpty) {
                 final db = ref.read(dbProvider);
+                final cache = ref.read(cacheServiceProvider);
                 final currentId = ref.read(currentFolderProvider);
-                final viewModel = ref.read(contentProvider(currentId).notifier);
 
-                await db.createFolder(name, currentId);
-                viewModel.load(silent: true);
+                // 1. Persist to DB first to get ID
+                final newId = await db.createFolder(name, currentId);
+                
+                // 2. Create Folder object
+                final newFolder = Folder(
+                  id: newId, 
+                  name: name, 
+                  parentId: currentId, 
+                  createdAt: DateTime.now()
+                );
+                
+                // 3. Update Cache & Trigger Refresh
+                cache.addFolder(newFolder);
+                ref.read(refreshTriggerProvider.notifier).state++;
+                
                 if (context.mounted) Navigator.pop(context);
               }
             },
@@ -223,12 +240,18 @@ class DashboardController {
       ),
     );
   }
-  Future<void> deleteItem(dynamic item) async {
+   Future<void> deleteItem(dynamic item) async {
     final bool isFolder = item is Folder;
-    final String title = isFolder ? "Delete Folder?" : "Delete Note?";
-    final String content = isFolder 
-        ? "This will delete the folder '${item.name}' and all its contents.\nThis action cannot be undone." 
-        : "Are you sure you want to delete '${item.title}'?";
+    final filter = ref.read(activeFilterProvider);
+    final bool isTrash = filter == DashboardFilter.trash;
+
+    final String title = isTrash 
+        ? (isFolder ? "Permanently Delete Folder?" : "Permanently Delete Note?") 
+        : (isFolder ? "Move to Trash?" : "Move to Trash?");
+        
+    final String content = isTrash
+        ? "This will permanently delete the item. This action cannot be undone."
+        : "Item will be moved to Trash.";
 
     final bool? confirm = await showDialog<bool>(
       context: context,
@@ -243,7 +266,7 @@ class DashboardController {
           TextButton(
             onPressed: () => Navigator.pop(context, true), 
             style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text("Delete"),
+            child: Text(isTrash ? "Delete Forever" : "Trash"),
           ),
         ],
       ),
@@ -251,24 +274,89 @@ class DashboardController {
 
     if (confirm == true) {
       final db = ref.read(dbProvider);
-      final currentId = ref.read(currentFolderProvider);
-      final viewModel = ref.read(contentProvider(currentId).notifier);
+      final cache = ref.read(cacheServiceProvider);
       
-      // Optimistic Update
-      viewModel.removeItem(item);
-
-      if (isFolder) {
-        await db.deleteFolder(item.id);
-      } else if (item is Note) {
-        await db.deleteNote(item.id);
+      // CACHE-FIRST UPDATES
+      if (isTrash) {
+        // Permanent Delete
+        cache.permanentlyDelete(item);
+        
+        if (isFolder) {
+          await db.deleteFolder(item.id, permanent: true);
+        } else {
+          await db.deleteNote(item.id, permanent: true);
+        }
+      } else {
+        // Soft Delete: Move to Trash
+        cache.moveToTrash(item);
+        
+        // DB Update
+        if (isFolder) {
+          await db.deleteFolder(item.id, permanent: false);
+        } else {
+          await db.deleteNote(item.id, permanent: false);
+        }
       }
-      // viewModel.load(silent: true); // Not needed since removeItem handled it and delete is atomic
+      
+      // Trigger UI rebuild
+      ref.read(refreshTriggerProvider.notifier).state++;
     }
   }
+
+  Future<void> archiveItem(dynamic item, bool archive) async {
+    final db = ref.read(dbProvider);
+    final cache = ref.read(cacheServiceProvider);
+    
+    // Cache-first update
+    if (archive) {
+      cache.moveToArchive(item);
+    } else {
+      cache.restoreToActive(item);
+    }
+    
+    // Trigger UI rebuild
+    ref.read(refreshTriggerProvider.notifier).state++;
+    
+    // DB Update
+    final type = item is Folder ? 'folder' : 'note';
+    await db.archiveItem(item.id, type, archive);
+    
+    if (context.mounted) {
+       ScaffoldMessenger.of(context).showSnackBar(
+         SnackBar(
+           content: Text(archive ? "Archived" : "Unarchived"), 
+           action: SnackBarAction(label: "Undo", onPressed: () async {
+              await archiveItem(item, !archive);
+           })
+         )
+       );
+    }
+  }
+
+  Future<void> restoreItem(dynamic item) async {
+    final db = ref.read(dbProvider);
+    final cache = ref.read(cacheServiceProvider);
+    
+    // Cache-first update
+    cache.restoreToActive(item);
+    
+    // Trigger UI rebuild
+    ref.read(refreshTriggerProvider.notifier).state++;
+
+    final type = item is Folder ? 'folder' : 'note';
+    await db.restoreItem(item.id, type);
+    
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Restored")));
+    }
+  }
+
+  bool isFolder(dynamic item) => item is Folder;
+  
   Future<void> moveItemToParent(String incomingKey) async {
     final db = ref.read(dbProvider);
+    final cache = ref.read(cacheServiceProvider);
     final currentFolderId = ref.read(currentFolderProvider);
-    final viewModel = ref.read(contentProvider(currentFolderId).notifier);
     
     // Check if we are actually inside a folder
     if (currentFolderId == null) return;
@@ -282,7 +370,22 @@ class DashboardController {
     final type = parts[0];
     final id = int.parse(parts[1]);
 
-    // Update parent_id / folder_id
+    // Cache-first update
+    if (type == 'folder') {
+      final folder = await db.getFolder(id);
+      if (folder != null) {
+        cache.removeFolder(id);
+        cache.addFolder(folder.copyWith(parentId: targetParentId));
+      }
+    } else {
+      final note = await db.getNote(id);
+      if (note != null) {
+        cache.removeNote(id);
+        cache.addNote(note.copyWith(folderId: targetParentId));
+      }
+    }
+    
+    // DB Update
     await db.database.then((d) => d.update(
       type == 'folder' ? 'folders' : 'notes', 
       { type == 'folder' ? 'parent_id' : 'folder_id': targetParentId },
@@ -290,7 +393,8 @@ class DashboardController {
       whereArgs: [id]
     ));
     
-    viewModel.load(silent: true);
+    // Trigger UI rebuild
+    ref.read(refreshTriggerProvider.notifier).state++;
     
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

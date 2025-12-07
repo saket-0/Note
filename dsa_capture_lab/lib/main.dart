@@ -3,7 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 // IMPORTS: Feature-First structure
 import 'features/dashboard/dashboard_screen.dart';
-import 'features/dashboard/providers/dashboard_state.dart'; // Import providers
+import 'core/cache/cache_service.dart';
+import 'core/database/app_database.dart';
 
 void main() {
   runApp(const ProviderScope(child: DsaCaptureApp()));
@@ -17,16 +18,15 @@ class DsaCaptureApp extends ConsumerStatefulWidget {
 }
 
 class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
-  
+  late Future<void> _cacheLoadFuture;
+
   @override
   void initState() {
     super.initState();
-    // OPTIMIZATION: Seamless Background Loading
-    // Start fetching root folder data immediately on app launch.
-    // By the time the UI builds, data is likely ready or cached.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-       ref.read(contentProvider(null).notifier).load(silent: false);
-    });
+    // MEMORY-FIRST ARCHITECTURE: Load ALL data into cache at startup
+    final cache = ref.read(cacheServiceProvider);
+    final db = ref.read(dbProvider);
+    _cacheLoadFuture = cache.load(db);
   }
 
   @override
@@ -49,7 +49,20 @@ class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
           backgroundColor: Colors.transparent,
         ),
       ),
-      home: const DashboardScreen(),
+      home: FutureBuilder<void>(
+        future: _cacheLoadFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.done) {
+            return const DashboardScreen();
+          }
+          // Minimal splash while cache loads (usually < 100ms)
+          return const Scaffold(
+            body: Center(
+              child: CircularProgressIndicator(),
+            ),
+          );
+        },
+      ),
     );
   }
 }

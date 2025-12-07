@@ -9,14 +9,18 @@ class Folder {
   final String name;
   final int? parentId;
   final DateTime createdAt;
-  final int position; // Added
+  final int position; 
+  final bool isArchived; // Added
+  final bool isDeleted; // Added
 
   Folder({
     required this.id, 
     required this.name, 
     this.parentId, 
     required this.createdAt,
-    this.position = 0, // Default
+    this.position = 0, 
+    this.isArchived = false,
+    this.isDeleted = false,
   });
 
   factory Folder.fromMap(Map<String, dynamic> map) {
@@ -26,6 +30,26 @@ class Folder {
       parentId: map['parent_id'],
       createdAt: DateTime.fromMillisecondsSinceEpoch(map['created_at']),
       position: map['position'] ?? 0,
+      isArchived: (map['is_archived'] ?? 0) == 1,
+      isDeleted: (map['is_deleted'] ?? 0) == 1,
+    );
+  }
+
+  Folder copyWith({
+    String? name,
+    int? parentId,
+    int? position,
+    bool? isArchived,
+    bool? isDeleted,
+  }) {
+    return Folder(
+      id: id,
+      name: name ?? this.name,
+      parentId: parentId ?? this.parentId,
+      createdAt: createdAt,
+      position: position ?? this.position,
+      isArchived: isArchived ?? this.isArchived,
+      isDeleted: isDeleted ?? this.isDeleted,
     );
   }
 }
@@ -34,15 +58,17 @@ class Note {
   final int id;
   final String title;
   final String content;
-  final String? imagePath; // Legacy/Primary Cover
-  final List<String> images; // New Multi-Image support
+  final String? imagePath; 
+  final List<String> images; 
   final String fileType; 
   final int? folderId;
   final DateTime createdAt;
   final int color; 
   final bool isPinned; 
-  final bool isChecklist; // New Checklist Mode
+  final bool isChecklist; 
   final int position; 
+  final bool isArchived; // Added
+  final bool isDeleted; // Added
 
   Note({
     required this.id,
@@ -57,6 +83,8 @@ class Note {
     this.isPinned = false,
     this.isChecklist = false,
     this.position = 0, 
+    this.isArchived = false,
+    this.isDeleted = false,
   });
 
   factory Note.fromMap(Map<String, dynamic> map, {List<String> images = const []}) {
@@ -73,6 +101,8 @@ class Note {
       isPinned: (map['is_pinned'] ?? 0) == 1,
       isChecklist: (map['is_checklist'] ?? 0) == 1,
       position: map['position'] ?? 0,
+      isArchived: (map['is_archived'] ?? 0) == 1,
+      isDeleted: (map['is_deleted'] ?? 0) == 1,
     );
   }
   
@@ -84,6 +114,9 @@ class Note {
     bool? isChecklist,
     int? position,
     List<String>? images,
+    bool? isArchived,
+    bool? isDeleted,
+    int? folderId,
   }) {
     return Note(
       id: id,
@@ -92,12 +125,14 @@ class Note {
       imagePath: imagePath,
       images: images ?? this.images,
       fileType: fileType,
-      folderId: folderId,
+      folderId: folderId ?? this.folderId,
       createdAt: createdAt,
       color: color ?? this.color,
       isPinned: isPinned ?? this.isPinned,
       isChecklist: isChecklist ?? this.isChecklist,
       position: position ?? this.position,
+      isArchived: isArchived ?? this.isArchived,
+      isDeleted: isDeleted ?? this.isDeleted,
     );
   }
 }
@@ -115,7 +150,7 @@ class AppDatabase {
 
   Future<Database> _initDB() async {
     final dbPath = await getDatabasesPath();
-    final path = join(dbPath, 'dsa_notes_v3.db'); // Increment version naming just in case, or stick to v2
+    final path = join(dbPath, 'dsa_notes_v3.db'); 
 
     return await openDatabase(
       path,
@@ -128,7 +163,9 @@ class AppDatabase {
             name TEXT NOT NULL,
             parent_id INTEGER,
             created_at INTEGER NOT NULL,
-            position INTEGER DEFAULT 0
+            position INTEGER DEFAULT 0,
+            is_archived INTEGER DEFAULT 0,
+            is_deleted INTEGER DEFAULT 0
           )
         ''');
 
@@ -145,7 +182,9 @@ class AppDatabase {
             position INTEGER DEFAULT 0,
             color INTEGER DEFAULT 0,
             is_pinned INTEGER DEFAULT 0,
-            is_checklist INTEGER DEFAULT 0, -- Added
+            is_checklist INTEGER DEFAULT 0, 
+            is_archived INTEGER DEFAULT 0,
+            is_deleted INTEGER DEFAULT 0,
             FOREIGN KEY (folder_id) REFERENCES folders (id) ON DELETE CASCADE
           )
         ''');
@@ -166,6 +205,15 @@ class AppDatabase {
       },
       onOpen: (db) async {
         // Auto-migrations
+        final tables = ['notes', 'folders'];
+        for (var table in tables) {
+           try { await db.query(table, columns: ['is_archived'], limit: 1); } 
+           catch (_) { await db.execute('ALTER TABLE $table ADD COLUMN is_archived INTEGER DEFAULT 0'); }
+
+           try { await db.query(table, columns: ['is_deleted'], limit: 1); } 
+           catch (_) { await db.execute('ALTER TABLE $table ADD COLUMN is_deleted INTEGER DEFAULT 0'); }
+        }
+
         try { await db.query('notes', columns: ['file_type'], limit: 1); } 
         catch (_) { await db.execute('ALTER TABLE notes ADD COLUMN file_type TEXT DEFAULT \'text\''); }
 
@@ -201,12 +249,38 @@ class AppDatabase {
     );
   }
 
+  Future<List<String>> _fetchImagesForNote(int noteId) async {
+     final db = await database;
+     final imgMaps = await db.query('note_images', where: 'note_id = ?', whereArgs: [noteId]);
+     return imgMaps.map((i) => i['image_path'] as String).toList();
+  }
+
   // --- CRUD for Folders ---
   
+  Future<Note?> getNote(int id) async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'notes',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    if (maps.isEmpty) return null;
+    
+    // Fetch Images if needed (or assume simplified)
+    List<String> images = [];
+    if (maps.first['file_type'] == 'text') {
+       images = await _fetchImagesForNote(id);
+    }
+    
+    return Note.fromMap(maps.first, images: images);
+  }
+  
+
+
   Future<int> createFolder(String name, int? parentId) async {
     final db = await database;
     final List<Map<String, dynamic>> result = await db.rawQuery(
-      'SELECT MAX(position) as maxPos FROM folders WHERE parent_id ${parentId == null ? "IS NULL" : "= ?"}',
+      'SELECT MAX(position) as maxPos FROM folders WHERE parent_id ${parentId == null ? "IS NULL" : "= ?"} AND is_deleted = 0 AND is_archived = 0',
       parentId == null ? [] : [parentId]
     );
     int maxPos = (result.first['maxPos'] as int?) ?? -1;
@@ -219,10 +293,21 @@ class AppDatabase {
     });
   }
 
-  Future<List<Folder>> getFolders(int? parentId) async {
+  Future<List<Folder>> getFolders(int? parentId, {bool showArchived = false, bool showDeleted = false}) async {
     final db = await database;
-    final String whereClause = parentId == null ? 'parent_id IS NULL' : 'parent_id = ?';
-    final List<Object?> args = parentId == null ? [] : [parentId];
+    String whereClause;
+    List<Object?> args;
+
+    if (showDeleted) {
+      whereClause = 'is_deleted = 1';
+      args = [];
+    } else if (showArchived) {
+      whereClause = 'is_archived = 1 AND is_deleted = 0';
+      args = [];
+    } else {
+      whereClause = '(parent_id ${parentId == null ? "IS NULL" : "= ?"}) AND is_archived = 0 AND is_deleted = 0';
+      args = parentId == null ? [] : [parentId];
+    }
     
     final maps = await db.query(
       'folders',
@@ -231,6 +316,28 @@ class AppDatabase {
       orderBy: 'position ASC, name ASC',
     );
     return maps.map((e) => Folder.fromMap(e)).toList();
+  }
+  
+  /// Get ALL folders from database (for cache loading)
+  Future<List<Folder>> getAllFolders() async {
+    final db = await database;
+    final maps = await db.query('folders', orderBy: 'position ASC, name ASC');
+    return maps.map((e) => Folder.fromMap(e)).toList();
+  }
+  
+  /// Get ALL notes from database (for cache loading)
+  Future<List<Note>> getAllNotes() async {
+    final db = await database;
+    final maps = await db.query('notes', orderBy: 'is_pinned DESC, position ASC, created_at DESC');
+    
+    List<Note> notes = [];
+    for (var m in maps) {
+       final noteId = m['id'] as int;
+       final imgMaps = await db.query('note_images', where: 'note_id = ?', whereArgs: [noteId]);
+       final images = imgMaps.map((i) => i['image_path'] as String).toList();
+       notes.add(Note.fromMap(m, images: images));
+    }
+    return notes;
   }
   
   Future<Folder?> getFolder(int id) async {
@@ -247,9 +354,13 @@ class AppDatabase {
     await db.update('folders', {'position': newPosition}, where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<int> deleteFolder(int id) async {
+  Future<int> deleteFolder(int id, {bool permanent = false}) async {
     final db = await database;
-    return await db.delete('folders', where: 'id = ?', whereArgs: [id]);
+    if (permanent) {
+       return await db.delete('folders', where: 'id = ?', whereArgs: [id]);
+    } else {
+       return await db.update('folders', {'is_deleted': 1}, where: 'id = ?', whereArgs: [id]);
+    }
   }
 
   // --- CRUD for Notes/Files ---
@@ -267,7 +378,7 @@ class AppDatabase {
   }) async {
     final db = await database;
     final List<Map<String, dynamic>> result = await db.rawQuery(
-      'SELECT MAX(position) as maxPos FROM notes WHERE folder_id ${folderId == null ? "IS NULL" : "= ?"}',
+      'SELECT MAX(position) as maxPos FROM notes WHERE folder_id ${folderId == null ? "IS NULL" : "= ?"} AND is_deleted = 0 AND is_archived = 0',
       folderId == null ? [] : [folderId]
     );
     int maxPos = (result.first['maxPos'] as int?) ?? -1;
@@ -309,6 +420,8 @@ class AppDatabase {
         'color': note.color,
         'is_pinned': note.isPinned ? 1 : 0,
         'is_checklist': note.isChecklist ? 1 : 0,
+        'is_archived': note.isArchived ? 1 : 0,
+        'is_deleted': note.isDeleted ? 1 : 0,
         // We don't update legacy image_path usually unless explicitly handled
       },
       where: 'id = ?',
@@ -345,15 +458,42 @@ class AppDatabase {
     await db.update('notes', {'position': newPosition}, where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<int> deleteNote(int id) async {
+  Future<int> deleteNote(int id, {bool permanent = false}) async {
     final db = await database;
-    return await db.delete('notes', where: 'id = ?', whereArgs: [id]);
+     if (permanent) {
+      return await db.delete('notes', where: 'id = ?', whereArgs: [id]);
+    } else {
+      return await db.update('notes', {'is_deleted': 1}, where: 'id = ?', whereArgs: [id]);
+    }
   }
 
-  Future<List<Note>> getNotes(int? folderId) async {
+  Future<void> restoreItem(int id, String type) async {
     final db = await database;
-    final String whereClause = folderId == null ? 'folder_id IS NULL' : 'folder_id = ?';
-    final List<Object?> args = folderId == null ? [] : [folderId];
+    final table = type == 'folder' ? 'folders' : 'notes';
+    await db.update(table, {'is_deleted': 0, 'is_archived': 0}, where: 'id = ?', whereArgs: [id]);
+  }
+  
+  Future<void> archiveItem(int id, String type, bool archive) async {
+     final db = await database;
+    final table = type == 'folder' ? 'folders' : 'notes';
+    await db.update(table, {'is_archived': archive ? 1 : 0}, where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<List<Note>> getNotes(int? folderId, {bool showArchived = false, bool showDeleted = false}) async {
+    final db = await database;
+    String whereClause;
+    List<Object?> args;
+
+    if (showDeleted) {
+      whereClause = 'is_deleted = 1';
+      args = [];
+    } else if (showArchived) {
+      whereClause = 'is_archived = 1 AND is_deleted = 0';
+      args = [];
+    } else {
+      whereClause = '(folder_id ${folderId == null ? "IS NULL" : "= ?"}) AND is_archived = 0 AND is_deleted = 0';
+      args = folderId == null ? [] : [folderId];
+    }
 
     final maps = await db.query(
       'notes',
