@@ -207,6 +207,14 @@ class DataRepository {
     final currentItems = getActiveContent(folderId);
     final newPos = position ?? (currentItems.isEmpty ? 0 : (currentItems.first as dynamic).position - 1);
     
+    // DEBUG: Trace position calculation
+    if (currentItems.isNotEmpty) {
+      print('[DEBUG] createNote: folderId=$folderId, currentItems count=${currentItems.length}');
+      print('[DEBUG] createNote: first item position=${(currentItems.first as dynamic).position}, newPos=$newPos');
+    } else {
+      print('[DEBUG] createNote: folderId=$folderId, no current items, newPos=$newPos');
+    }
+    
     // Optimistic: Add to cache immediately
     final tempId = generateTempId();
     final tempNote = Note(

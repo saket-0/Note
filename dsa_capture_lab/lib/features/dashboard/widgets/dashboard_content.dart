@@ -41,7 +41,8 @@ class DashboardContent extends ConsumerWidget {
     // Use PageStorageKey/ValueKey based on CONTEXT (Folder/Filter), not CONTENT.
     // This ensures scroll position is preserved when items are added/removed/modified.
     // Including viewMode ensures we reset if switching list<->grid.
-    final String storageKey = "${currentFilter}_${currentFolderId ?? 'root'}_$viewMode";
+    // Including items.length helps force grid rebuild when content changes.
+    final String storageKey = "${currentFilter}_${currentFolderId ?? 'root'}_${viewMode}_${items.length}";
 
     if (viewMode == ViewMode.list) {
       return ListView.separated(
