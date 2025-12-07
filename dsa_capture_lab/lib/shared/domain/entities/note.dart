@@ -1,5 +1,8 @@
 /// Note entity representing a note/file in the notes app.
 class Note {
+  // Sentinel value to distinguish "not provided" from "explicitly null"
+  static const Object _notProvided = Object();
+  
   final int id;
   final String title;
   final String content;
@@ -61,7 +64,8 @@ class Note {
     List<String>? images,
     bool? isArchived,
     bool? isDeleted,
-    int? folderId,
+    // Use Object? to allow distinguishing null from "not provided"
+    Object? folderId = _notProvided,
   }) {
     return Note(
       id: id,
@@ -70,7 +74,8 @@ class Note {
       imagePath: imagePath,
       images: images ?? this.images,
       fileType: fileType,
-      folderId: folderId ?? this.folderId,
+      // If folderId is _notProvided, use existing value; otherwise use the new value (which can be null)
+      folderId: folderId == _notProvided ? this.folderId : folderId as int?,
       createdAt: createdAt,
       color: color ?? this.color,
       isPinned: isPinned ?? this.isPinned,

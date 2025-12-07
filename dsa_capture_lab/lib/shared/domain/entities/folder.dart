@@ -1,5 +1,8 @@
 /// Folder entity representing a folder/directory in the notes hierarchy.
 class Folder {
+  // Sentinel value to distinguish "not provided" from "explicitly null"
+  static const Object _notProvided = Object();
+  
   final int id;
   final String name;
   final int? parentId;
@@ -32,7 +35,8 @@ class Folder {
 
   Folder copyWith({
     String? name,
-    int? parentId,
+    // Use Object? to allow distinguishing null from "not provided"
+    Object? parentId = _notProvided,
     int? position,
     bool? isArchived,
     bool? isDeleted,
@@ -40,7 +44,8 @@ class Folder {
     return Folder(
       id: id,
       name: name ?? this.name,
-      parentId: parentId ?? this.parentId,
+      // If parentId is _notProvided, use existing value; otherwise use the new value (which can be null)
+      parentId: parentId == _notProvided ? this.parentId : parentId as int?,
       createdAt: createdAt,
       position: position ?? this.position,
       isArchived: isArchived ?? this.isArchived,

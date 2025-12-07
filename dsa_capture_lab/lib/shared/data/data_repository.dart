@@ -462,12 +462,15 @@ class DataRepository {
   }
 
   void _addNoteToCache(Note note) {
+    print('[DataRepository] _addNoteToCache called: id=${note.id}, folderId=${note.folderId}');
     if (note.isDeleted) {
       _trashedItems.add(note);
     } else if (note.isArchived) {
       _archivedItems.add(note);
     } else {
       _notesByFolder.putIfAbsent(note.folderId, () => []).add(note);
+      final count = _notesByFolder[note.folderId]!.length;
+      print('[DataRepository] Added note to folderId=${note.folderId}, list now has $count items');
       _notesByFolder[note.folderId]!.sort((a, b) {
         if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
         return a.position.compareTo(b.position);
@@ -484,8 +487,16 @@ class DataRepository {
   }
 
   void _removeNoteFromCache(int id) {
-    for (final list in _notesByFolder.values) {
+    print('[DataRepository] _removeNoteFromCache called for id=$id');
+    for (final entry in _notesByFolder.entries) {
+      final folderId = entry.key;
+      final list = entry.value;
+      final beforeCount = list.length;
       list.removeWhere((n) => n.id == id);
+      final afterCount = list.length;
+      if (beforeCount != afterCount) {
+        print('[DataRepository] Removed note from folderId=$folderId: $beforeCount -> $afterCount');
+      }
     }
     _archivedItems.removeWhere((item) => item is Note && item.id == id);
     _trashedItems.removeWhere((item) => item is Note && item.id == id);
