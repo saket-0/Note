@@ -124,7 +124,7 @@ class DashboardController {
   }
 
   Future<void> openFile(Note note) async {
-    if (note.fileType == 'text') {
+    if (note.fileType == 'text' || note.fileType == 'rich_text') {
       // Open Editor
       final result = await Navigator.push(
         context, 

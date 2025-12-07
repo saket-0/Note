@@ -8,6 +8,7 @@ import 'models/checklist_item.dart';
 import 'widgets/editor_app_bar.dart';
 import 'widgets/editor_canvas.dart';
 import 'widgets/editor_toolbar.dart';
+import 'controllers/rich_text_controller.dart';
 
 class EditorScreen extends ConsumerStatefulWidget {
   final int? folderId;
@@ -21,8 +22,11 @@ class EditorScreen extends ConsumerStatefulWidget {
 
 class _EditorScreenState extends ConsumerState<EditorScreen> {
   final _titleController = TextEditingController();
-  final _contentController = TextEditingController();
+  late RichTextController _contentController; 
   late EditorController _controller;
+
+  // 4. Add bool _showFormattingToolbar = false;.
+  bool _showFormattingToolbar = false;
 
   final List<Color> _noteColors = [
     Colors.transparent, // Default (Theme Background)
@@ -42,6 +46,8 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   @override
   void initState() {
     super.initState();
+    _contentController = RichTextController();
+    _contentController.addListener(_onSelectionChanged);
     _controller = EditorController(
       context: context, 
       ref: ref, 
@@ -56,75 +62,130 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
 
   @override
   void dispose() {
+    _contentController.removeListener(_onSelectionChanged);
     _controller.dispose();
     _titleController.dispose();
     _contentController.dispose();
     super.dispose();
   }
 
+  void _onSelectionChanged() {
+    if (mounted) setState(() {});
+  }
+
   void _showColorPicker() {
-     showModalBottomSheet(
+     // ... (unchanged)
+  }
+
+  void _showFormatOptions() {
+    showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF303134), // Google Surface
+      backgroundColor: const Color(0xFF303134),
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
       builder: (context) {
-        return Container(
-          padding: const EdgeInsets.all(16),
-          height: 100,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: _noteColors.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 12),
-            itemBuilder: (context, index) {
-              final color = _noteColors[index];
-              final isSelected = _controller.color == color.value;
-              return GestureDetector(
-                onTap: () {
-                  setState(() => _controller.color = color.value);
-                  _controller.saveNote(folderId: widget.folderId);
-                  Navigator.pop(context);
-                },
-                child: Container(
-                  width: 48,
-                  height: 48,
-                  decoration: BoxDecoration(
-                    color: color == Colors.transparent ? Theme.of(context).scaffoldBackgroundColor : color,
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: isSelected ? Theme.of(context).colorScheme.primary : Colors.white24,
-                      width: isSelected ? 3 : 1,
-                    ),
-                  ),
-                  child: color == Colors.transparent 
-                      ? const Icon(Icons.format_color_reset, color: Colors.white70, size: 20)
-                      : (isSelected ? const Icon(Icons.check, color: Colors.white) : null),
+        // Rebuild this when state changes? BottomSheet is separate subtree.
+        // We need to wrap this in a StatefulBuilder or ValueListenableBuilder if we want it to react to selection changes LIVE while open.
+        // Or just close/reopen?
+        // Better: Use `ValueListenableBuilder(valueListenable: _contentController, ...)`
+        return ValueListenableBuilder(
+          valueListenable: _contentController,
+          builder: (context, value, child) {
+              final styles = _contentController.currentStyles;
+              return Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildFormatOption(label: "H1", onTap: _controller.formatH1, isActive: styles.contains(StyleType.header1)),
+                    const SizedBox(width: 12),
+                    _buildFormatOption(label: "H2", onTap: _controller.formatH2, isActive: styles.contains(StyleType.header2)),
+                    const SizedBox(width: 12),
+                    Container(width: 1, height: 24, color: Colors.white24), // Separator
+                    const SizedBox(width: 12),
+                    _buildFormatOption(icon: Icons.format_bold, onTap: _controller.formatBold, isActive: styles.contains(StyleType.bold)),
+                    const SizedBox(width: 12),
+                    _buildFormatOption(icon: Icons.format_italic, onTap: _controller.formatItalic, isActive: styles.contains(StyleType.italic)),
+                    const SizedBox(width: 12),
+                    _buildFormatOption(icon: Icons.format_underlined, onTap: _controller.formatUnderline, isActive: styles.contains(StyleType.underline)),
+                    const SizedBox(width: 12),
+                    Container(width: 1, height: 24, color: Colors.white24), // Separator
+                    const SizedBox(width: 12),
+                    _buildFormatOption(icon: Icons.format_clear, onTap: _controller.clearFormatting),
+                  ],
                 ),
-              );
-            },
-          ),
+              ),
+            );
+          }
         );
       },
     );
   }
 
+  Widget _buildFormatOption({IconData? icon, String? label, required VoidCallback onTap, bool isActive = false}) {
+    return GestureDetector(
+      onTap: () {
+        onTap();
+        // Keep open? Or pop?
+        // Usually toggle keeps open. User might want to apply multiple.
+        // But original code popped.
+        // If I want to see highlight change, I should keep it open?
+        // Let's keep it open for "Toggle" experience.
+        // Navigator.pop(context); // REMOVED POP
+      },
+      child: Container(
+        width: 44,
+        height: 44,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: isActive ? Theme.of(context).colorScheme.primary.withOpacity(0.3) : Theme.of(context).colorScheme.primary.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(12),
+          border: isActive ? Border.all(color: Theme.of(context).colorScheme.primary, width: 2) : null,
+        ),
+        child: icon != null 
+          ? Icon(icon, color: isActive ? Colors.white : Theme.of(context).colorScheme.primary, size: 24)
+          : Text(
+              label ?? "", 
+              style: TextStyle(
+                color: isActive ? Colors.white : Theme.of(context).colorScheme.primary, 
+                fontWeight: FontWeight.bold,
+                fontSize: 16
+              )
+            ),
+      ),
+    );
+  }
+
+
+  
+  // ...
+
+  void _toggleFormatToolbar() {
+    setState(() {
+      _showFormattingToolbar = !_showFormattingToolbar;
+    });
+  }
+  
   @override
   Widget build(BuildContext context) {
-    // Logic: If color is 0 (Transparent/Default), use Theme Scaffold (Dark #202124).
+    // ... existing colors ...
     final Color bgColor = _controller.color == 0 
         ? Theme.of(context).scaffoldBackgroundColor 
         : Color(_controller.color);
-    
-    // Logic: Contrast. If BG is dark (Theme), text should be White.
-    // If BG is Pastel (custom color), user might want Black.
-    // But since we switched to Dark Note Colors, text should likely remain White/Light Grey.
+    // ... existing contentColor ...
     final bool isDark = bgColor.computeLuminance() < 0.5;
     final Color contentColor = isDark ? const Color(0xFFE8EAED) : Colors.black87;
 
     return PopScope(
-      canPop: true,
-      onPopInvokedWithResult: (didPop, _) {
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
          if (didPop) return;
-         _controller.saveNote(folderId: widget.folderId);
+         await _controller.saveNote(folderId: widget.folderId);
+         if (mounted) {
+           Navigator.pop(context);
+         }
       },
       child: Scaffold(
         backgroundColor: bgColor,
@@ -171,12 +232,20 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         bottomNavigationBar: EditorToolbar(
           onAddImage: _controller.pickImage,
           onColorPalette: _showColorPicker,
-          onFormat: () {
-             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Formatting coming soon!")));
-          },
-          onUndo: () {},   
-          onRedo: () {},   
+          onFormatToggle: _toggleFormatToolbar,
+          onUndo: _controller.undo, 
+          onRedo: _controller.redo,
+          canUndo: _controller.canUndo,
+          canRedo: _controller.canRedo,
           contentColor: contentColor,
+          isFormattingMode: _showFormattingToolbar,
+          activeStyles: _contentController.currentStyles,
+          onH1: _controller.formatH1,
+          onH2: _controller.formatH2,
+          onBold: _controller.formatBold,
+          onItalic: _controller.formatItalic,
+          onUnderline: _controller.formatUnderline,
+          onClearFormatting: _controller.clearFormatting,
         ),
       ),
     );

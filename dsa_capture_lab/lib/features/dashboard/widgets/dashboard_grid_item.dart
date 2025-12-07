@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../../core/database/app_database.dart';
@@ -256,14 +257,23 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
        }
        // 4. TEXT / OTHER
        else {
-          IconData icon = Icons.insert_drive_file;
+           IconData icon = Icons.insert_drive_file;
            if (item.fileType == 'pdf') {
              icon = Icons.picture_as_pdf;
-           } else if (item.fileType == 'text') {
+           } else if (item.fileType == 'text' || item.fileType == 'rich_text') {
              icon = Icons.description;
            }
            
            String previewText = item.content.trim();
+           if (item.fileType == 'rich_text') {
+             try {
+               final json = jsonDecode(previewText);
+               previewText = json['text'] ?? "";
+             } catch (e) {
+               // Fallback if parsing fails or plain text
+             }
+           }
+           
            if (previewText.isEmpty) previewText = "No content";
 
            contentBody = Padding(

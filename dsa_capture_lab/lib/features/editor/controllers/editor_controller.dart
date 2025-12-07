@@ -6,16 +6,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/database/app_database.dart';
 import '../models/checklist_item.dart';
 import '../../../core/cache/cache_service.dart';
- 
+import '../utils/history_stack.dart';
+import 'rich_text_controller.dart';
 
 class EditorController {
   final WidgetRef ref;
   final BuildContext context;
   final TextEditingController titleController;
-  final TextEditingController contentController;
-  final Function(void Function()) setState; // Callback to trigger UI rebuilds
+  final RichTextController contentController;
+  final Function(void Function()) setState; 
 
-  // State visible to UI
+  // State
   int? currentNoteId;
   DateTime createdAt = DateTime.now();
   String? imagePath;
@@ -24,7 +25,13 @@ class EditorController {
   bool isPinned = false;
   bool isChecklist = false;
   List<ChecklistItem> checklistItems = [];
-  Timer? _debounce;
+  
+  // Logic
+  Timer? _saveDebounce;
+  Timer? _historyDebounce;
+  // History now stores the serialized JSON string to capture text + formatting spans
+  final HistoryStack<String> _history = HistoryStack();
+  bool _isInternalChange = false;
 
   EditorController({
     required this.context,
@@ -34,11 +41,16 @@ class EditorController {
     required this.setState,
   });
 
+  bool get canUndo => _history.canUndo;
+  bool get canRedo => _history.canRedo;
+
   void init(Note? existingNote) {
     if (existingNote != null) {
       currentNoteId = existingNote.id;
       titleController.text = existingNote.title;
-      contentController.text = existingNote.content;
+      // Load content (JSON or Text) into RichTextController
+      contentController.load(existingNote.content);
+      
       createdAt = existingNote.createdAt;
       imagePath = existingNote.imagePath;
       color = existingNote.color;
@@ -51,24 +63,106 @@ class EditorController {
       }
     }
     
+    // Initial History State
+    _history.push(contentController.serialize());
+
     // Setup listeners
-    titleController.addListener(_onTextChanged);
-    contentController.addListener(_onTextChanged);
+    titleController.addListener(_onTitleChanged);
+    contentController.addListener(_onContentChanged);
   }
 
   void dispose() {
-    _debounce?.cancel();
-    // Controllers disposed by Parent
+    _saveDebounce?.cancel();
+    _historyDebounce?.cancel();
   }
 
-  void _onTextChanged() {
-    if (_debounce?.isActive ?? false) _debounce!.cancel();
-    _debounce = Timer(const Duration(milliseconds: 1000), () {
+  void _onTitleChanged() {
+    _scheduleSave();
+  }
+
+  void _onContentChanged() {
+    if (_isInternalChange) return;
+
+    // Schedule Save
+    _scheduleSave();
+
+    // Schedule History Push
+    if (_historyDebounce?.isActive ?? false) _historyDebounce!.cancel();
+    _historyDebounce = Timer(const Duration(milliseconds: 500), () {
+      // Serialize current state (text + spans)
+      final currentState = contentController.serialize();
+      _history.push(currentState);
+      setState(() {});
+    });
+  }
+
+  void _scheduleSave() {
+    if (_saveDebounce?.isActive ?? false) _saveDebounce!.cancel();
+    _saveDebounce = Timer(const Duration(milliseconds: 1000), () {
       saveNote();
     });
   }
 
+  void undo() {
+    if (canUndo) {
+      _isInternalChange = true;
+      final oldState = _history.undo();
+      if (oldState != null) {
+        contentController.load(oldState);
+        _scheduleSave(); 
+      }
+      _isInternalChange = false;
+      setState(() {});
+    }
+  }
+
+  void redo() {
+    if (canRedo) {
+      _isInternalChange = true;
+      final newState = _history.redo();
+      if (newState != null) {
+         contentController.load(newState);
+         _scheduleSave();
+      }
+      _isInternalChange = false;
+      setState(() {});
+    }
+  }
+
+  void formatBold() {
+    contentController.toggleStyle(StyleType.bold);
+    _onContentChanged(); // Force history push
+  }
+
+  void formatItalic() {
+    contentController.toggleStyle(StyleType.italic);
+     _onContentChanged();
+  }
+
+  void formatUnderline() {
+    contentController.toggleStyle(StyleType.underline);
+     _onContentChanged();
+  }
+
+  void formatH1() {
+    contentController.toggleStyle(StyleType.header1);
+     _onContentChanged();
+  }
+
+  void formatH2() {
+    contentController.toggleStyle(StyleType.header2);
+     _onContentChanged();
+  }
+
+  void clearFormatting() {
+    contentController.clearFormatting();
+     _onContentChanged();
+  }
+
   void _parseContentToChecklist() {
+    // Basic checklists parse from plain text for now.
+    // Ideally we adapt checklist mode to work with formatted text too?
+    // For now, use raw text.
     checklistItems = contentController.text.split('\n').where((line) => line.isNotEmpty).map((line) {
       bool checked = line.startsWith('[x] ');
       String text = line.replaceFirst(RegExp(r'^\[[ x]\] '), '');
@@ -82,13 +176,15 @@ class EditorController {
     }).join('\n');
     
     if (contentController.text != content) {
-      contentController.value = contentController.value.copyWith(
-        text: content,
-        selection: TextSelection.collapsed(offset: content.length),
-        composing: TextRange.empty
-      );
+      _isInternalChange = true;
+      // Load as plain text (clears formatting) because checklists don't support rich text yet?
+      // Or we can try to preserve?
+      // Let's just load plain.
+      contentController.text = content; 
+      _isInternalChange = false;
+      _history.push(contentController.serialize());
     }
-    _onTextChanged();
+    _scheduleSave();
   }
 
   void toggleChecklistMode() {
@@ -124,9 +220,11 @@ class EditorController {
   Future<void> saveNote({int? folderId}) async {
     try {
       final title = titleController.text.trim();
-      final content = contentController.text.trim();
+      // SAVE SERIALIZED CONTENT to preserve diffs/spans
+      final content = contentController.serialize();
 
-      if (title.isEmpty && content.isEmpty && currentNoteId == null && attachedImages.isEmpty) return;
+      if (title.isEmpty && contentController.text.isEmpty && currentNoteId == null && attachedImages.isEmpty) return;
+      // Note: we check contentController.text for emptiness, but save serialized content.
 
       final db = ref.read(dbProvider);
 
@@ -138,24 +236,14 @@ class EditorController {
           content: content,
           imagePath: imagePath,
           images: attachedImages,
-          fileType: 'text',
-          folderId: folderId, // This might need logic to preserve existing
+          fileType: 'rich_text', // Updated file type
+          folderId: folderId, 
           createdAt: createdAt, 
           color: color,
           isPinned: isPinned,
           isChecklist: isChecklist,
           position: 0, 
         );
-        // We really need to fetch existing to preserve folderId if passed null... 
-        // Logic simplified for now, assuming passing original FolderId is handled by View passing it back?
-        // Actually, we can fetch from DB? Or just trust state?
-        // Using `folderId` passed from arguments only for creation usually. 
-        // For update, we should check `existingNote` logic but here we lost it?
-        // Let's rely on DB or keep it simple: We don't change folderId here unless moved.
-        // Wait, `folderId` argument is nullable. 
-        // Refactor: `saveNote` shouldn't take folderId, it should be in state?
-        // Let's assume we stick to current folder logic.
-        
         await db.updateNote(updatedNote);
       } else {
         // CREATE
@@ -164,7 +252,7 @@ class EditorController {
           content: content,
           imagePath: imagePath,
           images: attachedImages,
-          fileType: 'text',
+          fileType: 'rich_text',
           folderId: folderId,
           color: color,
           isPinned: isPinned,
@@ -172,8 +260,6 @@ class EditorController {
         );
         
         currentNoteId = newId;
-        // No setState needed if we just update local var for next save? 
-        // But UI might want to know ID?
       }
     } catch (e) {
       debugPrint('Error saving note: $e');
@@ -183,7 +269,7 @@ class EditorController {
   Future<void> deleteNote() async {
     if (currentNoteId != null) {
       final db = ref.read(dbProvider);
-      await db.deleteNote(currentNoteId!); // Soft delete usually? Controller logic had soft delete.
+      await db.deleteNote(currentNoteId!);
     }
     Navigator.pop(context);
   }
