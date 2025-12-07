@@ -360,10 +360,8 @@ class DataRepository {
 
   /// Move note to folder (cache-first)
   Future<void> moveNote(int noteId, int? targetFolderId) async {
-    print('[DataRepository] moveNote called: noteId=$noteId, targetFolderId=$targetFolderId');
     final note = findNote(noteId);
     if (note != null) {
-      print('[DataRepository] Found note: ${note.title}, moving from folderId=${note.folderId} to $targetFolderId');
       // Calculate new position (top of target folder)
       final activeItems = getActiveContent(targetFolderId);
       final newPos = activeItems.isEmpty 
@@ -378,19 +376,15 @@ class DataRepository {
       _removeNoteFromCache(noteId);
       _addNoteToCache(updatedNote);
       _notifyChange();
-      print('[DataRepository] Cache updated, _notifyChange called');
 
       // Update full note to persist folderId and position
       if (noteId > 0) {
         try {
           await _db.moveNote(noteId, targetFolderId, newPosition: newPos);
-          print('[DataRepository] Database updated successfully');
         } catch (e) {
-          print('[DataRepository] Error moving note in DB: $e');
+          // Error moving note in DB - cache already updated optimistically
         }
       }
-    } else {
-      print('[DataRepository] ERROR: Note not found with ID $noteId! Cannot move.');
     }
   }
 
@@ -462,15 +456,12 @@ class DataRepository {
   }
 
   void _addNoteToCache(Note note) {
-    print('[DataRepository] _addNoteToCache called: id=${note.id}, folderId=${note.folderId}');
     if (note.isDeleted) {
       _trashedItems.add(note);
     } else if (note.isArchived) {
       _archivedItems.add(note);
     } else {
       _notesByFolder.putIfAbsent(note.folderId, () => []).add(note);
-      final count = _notesByFolder[note.folderId]!.length;
-      print('[DataRepository] Added note to folderId=${note.folderId}, list now has $count items');
       _notesByFolder[note.folderId]!.sort((a, b) {
         if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
         return a.position.compareTo(b.position);
@@ -487,16 +478,8 @@ class DataRepository {
   }
 
   void _removeNoteFromCache(int id) {
-    print('[DataRepository] _removeNoteFromCache called for id=$id');
-    for (final entry in _notesByFolder.entries) {
-      final folderId = entry.key;
-      final list = entry.value;
-      final beforeCount = list.length;
+    for (final list in _notesByFolder.values) {
       list.removeWhere((n) => n.id == id);
-      final afterCount = list.length;
-      if (beforeCount != afterCount) {
-        print('[DataRepository] Removed note from folderId=$folderId: $beforeCount -> $afterCount');
-      }
     }
     _archivedItems.removeWhere((item) => item is Note && item.id == id);
     _trashedItems.removeWhere((item) => item is Note && item.id == id);
