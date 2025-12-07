@@ -203,7 +203,15 @@ class _JoystickOverlayState extends State<_JoystickOverlay> with SingleTickerPro
     // Let's require them to move finger a bit from BALL center to activate.
     
     final distFromBall = (currentPoint - center).distance;
-    if (distFromBall < 20) return null; // Deadzone
+    
+    // DEADZONE 1: Activation Threshold
+    // Requires moving finger away from origin to start.
+    if (distFromBall < 20) return null; 
+    
+    // DEADZONE 2: Cancellation Threshold (New)
+    // Allows dragging to the Shifted Visual Center to cancel selection.
+    final distFromVirtualCenter = diff.distance;
+    if (distFromVirtualCenter < 20) return null;
     
     final double touchAngle = math.atan2(diff.dy, diff.dx);
     
