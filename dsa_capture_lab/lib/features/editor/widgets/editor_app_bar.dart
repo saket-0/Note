@@ -34,13 +34,13 @@ class EditorAppBar extends StatelessWidget implements PreferredSizeWidget {
         IconButton(
           icon: Icon(
             isPinned ? Icons.push_pin : Icons.push_pin_outlined,
-            color: isPinned ? Colors.teal : contentColor,
+            color: isPinned ? Theme.of(context).colorScheme.primary : contentColor,
           ),
           onPressed: onPinToggle,
         ),
         IconButton(
           icon: Icon(
-            isChecklist ? Icons.check_box : Icons.check_box_outline_blank,
+            isChecklist ? Icons.check_box : Icons.check_box_outlined,
             color: contentColor,
           ),
           onPressed: onChecklistToggle,

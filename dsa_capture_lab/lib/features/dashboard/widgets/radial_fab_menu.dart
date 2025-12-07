@@ -80,7 +80,7 @@ class _RadialFabMenuState extends State<RadialFabMenu> {
           width: 56,
           height: 56,
           decoration: BoxDecoration(
-            color: _isMenuOpen ? Colors.teal : const Color(0xFF202124),
+            color: _isMenuOpen ? Theme.of(context).colorScheme.primary : Theme.of(context).floatingActionButtonTheme.backgroundColor,
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
@@ -90,7 +90,7 @@ class _RadialFabMenuState extends State<RadialFabMenu> {
               ),
             ],
           ),
-          child: const Icon(Icons.edit, color: Colors.white),
+          child: Icon(Icons.edit, color: _isMenuOpen ? Theme.of(context).colorScheme.onPrimary : Theme.of(context).colorScheme.primary),
         ),
       ),
     );
@@ -284,7 +284,7 @@ class _RadialMenuContent extends StatelessWidget {
                       width: 48,
                       height: 48,
                       decoration: BoxDecoration(
-                        color: index == 0 ? Colors.blue : Colors.orange, 
+                        color: index == 0 ? const Color(0xFF8AB4F8) : const Color(0xFF81C995), // Google Blue : Google Green
                         shape: BoxShape.circle,
                         border: isHovered ? Border.all(color: Colors.white, width: 2) : null,
                         boxShadow: [
@@ -293,7 +293,7 @@ class _RadialMenuContent extends StatelessWidget {
                       ),
                       child: Icon(
                          index == 0 ? Icons.create_new_folder : Icons.file_upload,
-                         color: Colors.white,
+                         color: Colors.black87, // Dark icons on pastel Google colors
                          size: isHovered ? 26 : 22,
                       ),
                     ),
@@ -309,11 +309,11 @@ class _RadialMenuContent extends StatelessWidget {
           left: 0, top: 0,
           child: Container(
             width: 56, height: 56,
-            decoration: const BoxDecoration(
-              color: Colors.teal,
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primary,
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.edit, color: Colors.white),
+            child: Icon(Icons.edit, color: Theme.of(context).colorScheme.onPrimary),
           ),
         ),
       ],

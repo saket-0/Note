@@ -7,19 +7,7 @@ class GradientBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            Color(0xFF0F172A), // Slate 900
-            Color(0xFF1E293B), // Slate 800
-            Color(0xFF334155), // Slate 700
-          ],
-        ),
-      ),
-      child: child,
-    );
+    // Pass-through: Theme handles background now for minimalism/performance
+    return child;
   }
 }
