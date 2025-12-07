@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../database/app_database.dart';
 import '../domain/entities/entities.dart';
 import '../../features/dashboard/providers/dashboard_state.dart';
+import '../services/layout_service.dart';
 
 /// Unified Data Repository with cache-first architecture.
 /// 
@@ -82,12 +83,12 @@ class DataRepository {
 
   void _sortAllLists() {
     for (final list in _foldersByParent.values) {
-      list.sort((a, b) => a.position.compareTo(b.position));
+      list.sort((a, b) => b.position.compareTo(a.position));
     }
     for (final list in _notesByFolder.values) {
       list.sort((a, b) {
         if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
-        return a.position.compareTo(b.position);
+        return b.position.compareTo(a.position);
       });
     }
   }
@@ -111,7 +112,7 @@ class DataRepository {
       final aPinned = (a is Note) ? a.isPinned : false;
       final bPinned = (b is Note) ? b.isPinned : false;
       if (aPinned != bPinned) return aPinned ? -1 : 1;
-      return (a as dynamic).position.compareTo((b as dynamic).position);
+      return (b as dynamic).position.compareTo((a as dynamic).position);
     });
     
     return combined;
@@ -161,7 +162,7 @@ class DataRepository {
   }) async {
     // Calculate position
     final currentItems = getActiveContent(parentId);
-    final newPos = position ?? (currentItems.isEmpty ? 0 : (currentItems.first as dynamic).position - 1);
+    final newPos = position ?? LayoutService.getNewItemPosition(currentItems);
     
     // Optimistic: Add to cache immediately
     final tempId = generateTempId();
@@ -205,7 +206,7 @@ class DataRepository {
   }) async {
     // Calculate position
     final currentItems = getActiveContent(folderId);
-    final newPos = position ?? (currentItems.isEmpty ? 0 : (currentItems.first as dynamic).position - 1);
+    final newPos = position ?? LayoutService.getNewItemPosition(currentItems);
     
     // DEBUG: Trace position calculation
     if (currentItems.isNotEmpty) {
@@ -372,9 +373,7 @@ class DataRepository {
     if (note != null) {
       // Calculate new position (top of target folder)
       final activeItems = getActiveContent(targetFolderId);
-      final newPos = activeItems.isEmpty 
-          ? 0 
-          : (activeItems.first as dynamic).position - 1;
+      final newPos = LayoutService.getMoveToTopPosition(activeItems);
 
       final updatedNote = note.copyWith(
         folderId: targetFolderId,
@@ -403,9 +402,7 @@ class DataRepository {
     if (folder != null) {
       // Calculate new position (top of target folder)
       final activeItems = getActiveContent(targetParentId);
-      final newPos = activeItems.isEmpty 
-          ? 0 
-          : (activeItems.first as dynamic).position - 1;
+      final newPos = LayoutService.getMoveToTopPosition(activeItems);
 
       final updatedFolder = folder.copyWith(
         parentId: targetParentId,
@@ -430,14 +427,18 @@ class DataRepository {
   Future<void> reorderItems(List<dynamic> items) async {
     final updates = <({String type, int id, int position})>[];
     
-    for (int i = 0; i < items.length; i++) {
-      final item = items[i];
+    final calculatedUpdates = LayoutService.reorderItems(items);
+    
+    for (final update in calculatedUpdates) {
+      final item = update.item;
+      final newPos = update.position;
+      
       if (item is Folder) {
-        _updateFolderInCache(item.copyWith(position: i));
-        if (item.id > 0) updates.add((type: 'folder', id: item.id, position: i));
+        _updateFolderInCache(item.copyWith(position: newPos));
+        if (item.id > 0) updates.add((type: 'folder', id: item.id, position: newPos));
       } else if (item is Note) {
-        _updateNoteInCache(item.copyWith(position: i));
-        if (item.id > 0) updates.add((type: 'note', id: item.id, position: i));
+        _updateNoteInCache(item.copyWith(position: newPos));
+        if (item.id > 0) updates.add((type: 'note', id: item.id, position: newPos));
       }
     }
     
@@ -459,7 +460,7 @@ class DataRepository {
       _archivedItems.add(folder);
     } else {
       _foldersByParent.putIfAbsent(folder.parentId, () => []).add(folder);
-      _foldersByParent[folder.parentId]!.sort((a, b) => a.position.compareTo(b.position));
+      _foldersByParent[folder.parentId]!.sort((a, b) => b.position.compareTo(a.position));
     }
   }
 
@@ -472,7 +473,7 @@ class DataRepository {
       _notesByFolder.putIfAbsent(note.folderId, () => []).add(note);
       _notesByFolder[note.folderId]!.sort((a, b) {
         if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
-        return a.position.compareTo(b.position);
+        return b.position.compareTo(a.position);
       });
     }
   }

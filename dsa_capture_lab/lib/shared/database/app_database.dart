@@ -99,7 +99,7 @@ class AppDatabase {
     // Step 1: Get all notes
     final noteMaps = await db.query(
       'notes',
-      orderBy: 'is_pinned DESC, position ASC, created_at DESC',
+      orderBy: 'is_pinned DESC, position DESC, created_at DESC',
     );
     
     if (noteMaps.isEmpty) return [];
@@ -124,7 +124,7 @@ class AppDatabase {
   /// Load ALL folders in a single query
   Future<List<Folder>> getAllFolders() async {
     final db = await database;
-    final maps = await db.query('folders', orderBy: 'position ASC, name ASC');
+    final maps = await db.query('folders', orderBy: 'position DESC, name ASC');
     return maps.map((e) => Folder.fromMap(e)).toList();
   }
 
@@ -354,7 +354,7 @@ class AppDatabase {
       'SELECT MAX(position) as maxPos FROM $table WHERE $parentCol ${parentId == null ? "IS NULL" : "= ?"} AND is_deleted = 0 AND is_archived = 0',
       parentId == null ? [] : [parentId],
     );
-    return ((result.first['maxPos'] as int?) ?? -1) + 1;
+    return ((result.first['maxPos'] as int?) ?? 0) + 10000;
   }
 
   Future<int> _getNextPositionTxn(Transaction txn, String table, String parentCol, int? parentId) async {
@@ -362,7 +362,7 @@ class AppDatabase {
       'SELECT MAX(position) as maxPos FROM $table WHERE $parentCol ${parentId == null ? "IS NULL" : "= ?"} AND is_deleted = 0 AND is_archived = 0',
       parentId == null ? [] : [parentId],
     );
-    return ((result.first['maxPos'] as int?) ?? -1) + 1;
+    return ((result.first['maxPos'] as int?) ?? 0) + 10000;
   }
 }
 
