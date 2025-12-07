@@ -12,6 +12,7 @@ import 'widgets/dashboard_app_bar.dart';
 import 'widgets/dashboard_content.dart';
 import 'widgets/dashboard_drawer.dart';
 import 'widgets/radial_fab_menu.dart';
+import '../../core/cache/cache_service.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
@@ -111,24 +112,34 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   children: [
                     FloatingActionButton(
                       heroTag: 'camera_fab',
-                      onPressed: () {
-                         Navigator.push(
+                      onPressed: () async {
+                         await Navigator.push(
                            context, 
                            SlideUpPageRoute(page: CameraScreen(folderId: currentFolderId)),
                          );
-                         ref.read(refreshTriggerProvider.notifier).state++;
+                         // Reload entire cache to ensure fresh data from DB (Simpler than manually syncing everything)
+                         // This fixes "Missing Content"
+                         if (context.mounted) {
+                            final db = ref.read(dbProvider);
+                            await ref.read(cacheServiceProvider).load(db);
+                            ref.read(refreshTriggerProvider.notifier).state++;
+                         }
                       },
                       backgroundColor: const Color(0xFF202124),
                       child: const Icon(Icons.camera_alt, color: Colors.white),
                     ),
                     const SizedBox(height: 16), // Tighter spacing
                     RadialFabMenu(
-                      onCreateNote: () {
-                        Navigator.push(
+                      onCreateNote: () async {
+                        await Navigator.push(
                           context, 
                           SlideUpPageRoute(page: EditorScreen(folderId: currentFolderId)),
                         );
-                        ref.read(refreshTriggerProvider.notifier).state++;
+                        if (context.mounted) {
+                           final db = ref.read(dbProvider);
+                           await ref.read(cacheServiceProvider).load(db);
+                           ref.read(refreshTriggerProvider.notifier).state++;
+                        }
                       },
                       onImportFile: () => controller.importFile(),
                       onCreateFolder: () => controller.showCreateFolderDialog(),

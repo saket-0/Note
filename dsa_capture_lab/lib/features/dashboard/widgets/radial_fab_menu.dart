@@ -22,6 +22,7 @@ class RadialFabMenu extends StatefulWidget {
 
 class _RadialFabMenuState extends State<RadialFabMenu> {
   final LayerLink _layerLink = LayerLink();
+  final GlobalKey<RadialMenuOverlayState> _overlayKey = GlobalKey<RadialMenuOverlayState>();
   OverlayEntry? _overlayEntry;
   bool _isMenuOpen = false;
 
@@ -54,7 +55,8 @@ class _RadialFabMenuState extends State<RadialFabMenu> {
 
   OverlayEntry _createOverlayEntry(Offset fabGlobalPosition) {
     return OverlayEntry(
-      builder: (context) => _RadialMenuOverlay(
+      builder: (context) => RadialMenuOverlay(
+        key: _overlayKey,
         link: _layerLink,
         fabGlobalPosition: fabGlobalPosition,
         onClose: _closeMenu,
@@ -71,6 +73,8 @@ class _RadialFabMenuState extends State<RadialFabMenu> {
       link: _layerLink,
       child: GestureDetector(
         onLongPress: _openMenu,
+        onLongPressMoveUpdate: (details) => _overlayKey.currentState?.updateDragPosition(details.globalPosition),
+        onLongPressEnd: (_) => _overlayKey.currentState?.handleDragEnd(),
         onTap: widget.onCreateNote,
         child: Container(
           width: 56,
@@ -93,7 +97,7 @@ class _RadialFabMenuState extends State<RadialFabMenu> {
   }
 }
 
-class _RadialMenuOverlay extends StatefulWidget {
+class RadialMenuOverlay extends StatefulWidget {
   final LayerLink link;
   final Offset fabGlobalPosition;
   final VoidCallback onClose;
@@ -101,7 +105,8 @@ class _RadialMenuOverlay extends StatefulWidget {
   final VoidCallback onCreateFolder;
   final VoidCallback onCreateNote;
 
-  const _RadialMenuOverlay({
+  const RadialMenuOverlay({
+    super.key,
     required this.link,
     required this.fabGlobalPosition,
     required this.onClose,
@@ -111,10 +116,10 @@ class _RadialMenuOverlay extends StatefulWidget {
   });
 
   @override
-  State<_RadialMenuOverlay> createState() => _RadialMenuOverlayState();
+  State<RadialMenuOverlay> createState() => RadialMenuOverlayState();
 }
 
-class _RadialMenuOverlayState extends State<_RadialMenuOverlay> with SingleTickerProviderStateMixin {
+class RadialMenuOverlayState extends State<RadialMenuOverlay> with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _expandAnimation;
   int? _hoveredIndex; // 0 = Folder, 1 = Import (Updated order for layout)
@@ -145,7 +150,7 @@ class _RadialMenuOverlayState extends State<_RadialMenuOverlay> with SingleTicke
     _controller.forward();
   }
 
-  void _handleDragEnd() {
+  void handleDragEnd() {
     if (_hoveredIndex != null) {
       _executeAction(_hoveredIndex!);
     } else {
@@ -182,6 +187,11 @@ class _RadialMenuOverlayState extends State<_RadialMenuOverlay> with SingleTicke
   int? _hitTest(Offset globalPoint) {
     final Offset fabCenter = widget.fabGlobalPosition + const Offset(_fabSize / 2, _fabSize / 2);
     
+    // Check main FAB (Reset selection) - Explicitly handle canceling
+    if ((globalPoint - fabCenter).distance < _fabSize / 2) {
+       return null; 
+    }
+
     // Check children
     for (int i = 0; i < _childAngles.length; i++) {
       final double angle = _childAngles[i];
@@ -197,7 +207,7 @@ class _RadialMenuOverlayState extends State<_RadialMenuOverlay> with SingleTicke
     return null;
   }
 
-  void _updateDragPosition(Offset globalPoint) {
+  void updateDragPosition(Offset globalPoint) {
     final int? newIndex = _hitTest(globalPoint);
 
     if (newIndex != _hoveredIndex) {
@@ -211,8 +221,8 @@ class _RadialMenuOverlayState extends State<_RadialMenuOverlay> with SingleTicke
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTapUp: _handleTapUp,
-      onLongPressEnd: (_) => _handleDragEnd(),
-      onLongPressMoveUpdate: (details) => _updateDragPosition(details.globalPosition),
+      onLongPressEnd: (_) => handleDragEnd(),
+      onLongPressMoveUpdate: (details) => updateDragPosition(details.globalPosition),
       child: Stack(
         children: [
           // This follows the FAB position
