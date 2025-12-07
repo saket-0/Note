@@ -29,9 +29,10 @@ class DashboardContent extends ConsumerWidget {
     final String gridKey = items.map((e) => "${e.runtimeType}_${e.id}").join('_');
     
     if (viewMode == ViewMode.list) {
-      return ListView.builder(
+      return ListView.separated(
         key: ValueKey('list_$gridKey'),
         itemCount: items.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
         itemBuilder: (context, index) => _buildItem(context, ref, index),
       );
     }
