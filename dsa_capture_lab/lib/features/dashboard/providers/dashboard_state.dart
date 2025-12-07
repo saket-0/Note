@@ -5,8 +5,14 @@ import '../../../core/cache/cache_service.dart';
 // Filter Enum
 enum DashboardFilter { active, archived, trash }
 
+// View Mode Enum
+enum ViewMode { grid, list }
+
 // Current Filter Provider
 final activeFilterProvider = StateProvider<DashboardFilter>((ref) => DashboardFilter.active);
+
+// View Mode Provider (grid by default)
+final viewModeProvider = StateProvider<ViewMode>((ref) => ViewMode.grid);
 
 // Tracks the current folder ID (null = root)
 final currentFolderProvider = StateProvider<int?>((ref) => null);

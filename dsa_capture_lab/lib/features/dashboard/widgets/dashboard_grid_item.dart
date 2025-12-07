@@ -395,25 +395,46 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
     if (images.length == 1) {
       return ClipRRect(
         borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
-        child: Image.file(File(images[0]), fit: BoxFit.cover, height: 150, width: double.infinity, cacheWidth: 400),
+        child: Image.file(
+          File(images[0]), 
+          fit: BoxFit.cover, 
+          height: 150, 
+          width: double.infinity, 
+          cacheWidth: 400,
+          gaplessPlayback: true,
+        ),
       );
     } else if (images.length == 2) {
       return Row(
          children: images.map((path) => Expanded(
            child: SizedBox(
              height: 120,
-             child: Image.file(File(path), fit: BoxFit.cover, cacheWidth: 300),
+             child: Image.file(
+               File(path), 
+               fit: BoxFit.cover, 
+               cacheWidth: 300,
+               gaplessPlayback: true,
+             ),
            )
          )).toList(),
       );
     } else if (images.length == 3) {
       return Column(
         children: [
-          SizedBox(height: 100, width: double.infinity, child: Image.file(File(images[0]), fit: BoxFit.cover, cacheWidth: 400)),
+          SizedBox(
+            height: 100, 
+            width: double.infinity, 
+            child: Image.file(
+              File(images[0]), 
+              fit: BoxFit.cover, 
+              cacheWidth: 400,
+              gaplessPlayback: true,
+            ),
+          ),
           Row(
              children: [
-               Expanded(child: SizedBox(height: 80, child: Image.file(File(images[1]), fit: BoxFit.cover, cacheWidth: 300))),
-               Expanded(child: SizedBox(height: 80, child: Image.file(File(images[2]), fit: BoxFit.cover, cacheWidth: 300))),
+               Expanded(child: SizedBox(height: 80, child: Image.file(File(images[1]), fit: BoxFit.cover, cacheWidth: 300, gaplessPlayback: true))),
+               Expanded(child: SizedBox(height: 80, child: Image.file(File(images[2]), fit: BoxFit.cover, cacheWidth: 300, gaplessPlayback: true))),
              ],
           )
         ],
@@ -425,7 +446,12 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
         physics: const NeverScrollableScrollPhysics(),
         crossAxisCount: 2,
         childAspectRatio: 1.5,
-        children: images.take(4).map((path) => Image.file(File(path), fit: BoxFit.cover, cacheWidth: 200)).toList(),
+        children: images.take(4).map((path) => Image.file(
+          File(path), 
+          fit: BoxFit.cover, 
+          cacheWidth: 200,
+          gaplessPlayback: true,
+        )).toList(),
       );
     }
   }

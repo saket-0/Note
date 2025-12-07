@@ -82,6 +82,15 @@ class CacheService {
   List<dynamic> getArchivedContent() => List.from(_archivedItems);
   
   List<dynamic> getTrashedContent() => List.from(_trashedItems);
+  
+  /// Get ALL notes across all folders (for search)
+  List<Note> getAllNotes() {
+    final List<Note> all = [];
+    for (final notes in _notesByFolder.values) {
+      all.addAll(notes);
+    }
+    return all;
+  }
 
   // --- WRITE Operations (Update cache, return for UI) ---
   

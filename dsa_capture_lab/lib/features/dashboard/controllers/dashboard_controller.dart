@@ -6,6 +6,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:mime/mime.dart';
 import '../../../core/database/app_database.dart';
 import '../../../core/cache/cache_service.dart';
+import '../../../core/ui/page_routes.dart';
 import '../../camera/camera_screen.dart';
 import '../../editor/editor_screen.dart';
 import '../providers/dashboard_state.dart';
@@ -127,12 +128,12 @@ class DashboardController {
       // Open Editor
       final result = await Navigator.push(
         context, 
-        MaterialPageRoute(
-          builder: (_) => EditorScreen(
+        SlideUpPageRoute(
+          page: EditorScreen(
             folderId: note.folderId,
             existingNote: note,
-          )
-        )
+          ),
+        ),
       );
       
       // OPTIMISTIC UPDATE: Update cache if Note returned

@@ -3,8 +3,11 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import '../../core/database/app_database.dart';
+import 'models/checklist_item.dart';
+import 'widgets/editor_app_bar.dart';
+import 'widgets/editor_canvas.dart';
+import 'widgets/editor_toolbar.dart';
 
 class EditorScreen extends ConsumerStatefulWidget {
   final int? folderId;
@@ -16,12 +19,6 @@ class EditorScreen extends ConsumerStatefulWidget {
   ConsumerState<EditorScreen> createState() => _EditorScreenState();
 }
 
-class ChecklistItem {
-  bool isChecked;
-  String text;
-  ChecklistItem({required this.isChecked, required this.text});
-}
-
 class _EditorScreenState extends ConsumerState<EditorScreen> {
   final _titleController = TextEditingController();
   final _contentController = TextEditingController();
@@ -31,10 +28,10 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   int? _currentNoteId;
   DateTime _createdAt = DateTime.now();
   String? _imagePath;
-  List<String> _attachedImages = []; // New Multi-images
+  List<String> _attachedImages = []; 
   int _color = 0; 
   bool _isPinned = false;
-  bool _isChecklist = false; // New Checklist Mode
+  bool _isChecklist = false;
 
   List<ChecklistItem> _checklistItems = [];
 
@@ -104,7 +101,6 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
       _isChecklist = !_isChecklist;
       if (_isChecklist) {
         // Converting Text -> List
-        // Split by lines, assume unchecked unless marked
         if (_contentController.text.trim().isNotEmpty) {
            _parseContentToChecklist();
         } else {
@@ -112,17 +108,35 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         }
       } else {
         // Converting List -> Text
-        // Already synced via _syncChecklistToContent usually, but just in case
         _contentController.text = _checklistItems.map((e) => e.text).join('\n');
       }
       _saveNote();
     });
   }
 
+  Future<void> _pickImage() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(type: FileType.image);
+      if (result != null && result.files.single.path != null) {
+        setState(() {
+          _attachedImages.add(result.files.single.path!);
+        });
+        _saveNote();
+      }
+    } catch (e) {
+      debugPrint('Error picking image: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to pick image'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   @override
   void dispose() {
     _debounce?.cancel();
-    _saveNote(); 
+    // Note: Avoid async operations in dispose. Save should be synchronously queued.
     _titleController.dispose();
     _contentController.dispose();
     super.dispose();
@@ -136,281 +150,83 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   }
 
   Future<void> _saveNote() async {
-    final title = _titleController.text.trim();
-    final content = _contentController.text.trim();
+    try {
+      final title = _titleController.text.trim();
+      final content = _contentController.text.trim();
 
-    if (title.isEmpty && content.isEmpty && _currentNoteId == null && _attachedImages.isEmpty) return;
+      // If completely empty, don't save
+      if (title.isEmpty && content.isEmpty && _currentNoteId == null && _attachedImages.isEmpty) return;
 
-    final db = ref.read(dbProvider);
+      final db = ref.read(dbProvider);
 
-    if (_currentNoteId != null) {
-      final updatedNote = Note(
-        id: _currentNoteId!,
-        title: title,
-        content: content,
-        imagePath: _imagePath,
-        images: _attachedImages,
-        folderId: widget.folderId ?? widget.existingNote?.folderId,
-        createdAt: _createdAt, 
-        color: _color,
-        isPinned: _isPinned,
-        isChecklist: _isChecklist,
-      );
-      await db.updateNote(updatedNote);
-    } else {
-      final newId = await db.createNote(
-        title: title.isEmpty ? "Untitled Note" : title,
-        content: content,
-        folderId: widget.folderId,
-        color: _color,
-        isPinned: _isPinned,
-        isChecklist: _isChecklist,
-        images: _attachedImages,
-      );
-      if (mounted) {
-        setState(() {
-          _currentNoteId = newId;
-        });
+      if (_currentNoteId != null) {
+        // UPDATE existing note
+        final updatedNote = Note(
+          id: _currentNoteId!,
+          title: title,
+          content: content,
+          imagePath: _imagePath,
+          images: _attachedImages,
+          fileType: 'text',
+          folderId: widget.folderId ?? widget.existingNote?.folderId,
+          createdAt: _createdAt, 
+          color: _color,
+          isPinned: _isPinned,
+          isChecklist: _isChecklist,
+          position: widget.existingNote?.position ?? 0,
+          isArchived: widget.existingNote?.isArchived ?? false,
+          isDeleted: widget.existingNote?.isDeleted ?? false,
+        );
+        await db.updateNote(updatedNote);
       } else {
-        _currentNoteId = newId;
+        // CREATE new note
+        final newId = await db.createNote(
+          title: title.isEmpty ? "Untitled Note" : title,
+          content: content,
+          imagePath: _imagePath,
+          images: _attachedImages,
+          fileType: 'text',
+          folderId: widget.folderId,
+          color: _color,
+          isPinned: _isPinned,
+          isChecklist: _isChecklist,
+        );
+        
+        if (mounted) {
+          setState(() {
+            _currentNoteId = newId;
+          });
+        } else {
+          _currentNoteId = newId;
+        }
+      }
+    } catch (e) {
+      debugPrint('Error saving note: $e');
+      // Silent failure for auto-save to avoid spamming user
+    }
+  }
+
+  Future<void> _deleteNote() async {
+    try {
+      if (_currentNoteId != null) {
+        final db = ref.read(dbProvider);
+        final note = await db.getNote(_currentNoteId!);
+        if (note != null) {
+          await db.updateNote(note.copyWith(isDeleted: true));
+        }
+      }
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      debugPrint('Error deleting note: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to delete note'), backgroundColor: Colors.red),
+        );
       }
     }
-    
-    // Refresh Dashboard Logic could be triggered here or via provider watcher
-    // But since dashboard uses StateNotifier load(), we might want to trigger it if popping.
-    // For now, onPop handles it.
   }
 
-  Future<void> _pickImages() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      allowMultiple: true,
-    );
-    if (result != null) {
-      setState(() {
-        _attachedImages.addAll(result.paths.whereType<String>());
-      });
-      _saveNote();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    Color bgColor = _color == 0 ? Colors.transparent : Color(_color);
-    
-    return Scaffold(
-      backgroundColor: bgColor == Colors.transparent ? null : bgColor, 
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-            onPressed: () {
-               // When going back, if checklist, ensure synced one last time
-               if (_isChecklist) _syncChecklistToContent();
-
-               // Construct return object if saved
-               Note? resultNote;
-               if (_currentNoteId != null) {
-                  resultNote = Note(
-                    id: _currentNoteId!,
-                    title: _titleController.text.trim().isEmpty ? "Untitled Note" : _titleController.text.trim(),
-                    content: _contentController.text.trim(),
-                    imagePath: _imagePath,
-                    images: _attachedImages,
-                    folderId: widget.folderId ?? widget.existingNote?.folderId,
-                    createdAt: _createdAt, 
-                    color: _color,
-                    isPinned: _isPinned,
-                    isChecklist: _isChecklist,
-                  );
-               }
-               Navigator.pop(context, resultNote);
-            },
-        ),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: Icon(
-              _isPinned ? Icons.push_pin : Icons.push_pin_outlined,
-              color: _isPinned ? Colors.blueAccent : null,
-            ),
-            onPressed: () {
-               setState(() => _isPinned = !_isPinned);
-               _saveNote();
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.color_lens_outlined),
-            onPressed: _showColorPicker,
-          ),
-           IconButton(
-            icon: const Icon(Icons.image_outlined),
-            onPressed: _pickImages,
-          ),
-          IconButton(
-            icon: Icon(_isChecklist ? Icons.check_box : Icons.check_box_outline_blank),
-            onPressed: _toggleChecklistMode,
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Cover Image (Legacy) handling? Or just treat as first image?
-              // Logic: If _imagePath exists, show it.
-              if (_imagePath != null) 
-                 Padding(
-                   padding: const EdgeInsets.only(bottom: 16),
-                   child: ClipRRect(
-                     borderRadius: BorderRadius.circular(12),
-                     child: Image.file(File(_imagePath!), height: 200, width: double.infinity, fit: BoxFit.cover),
-                   ),
-                 ),
-
-              // Attached Images Grid
-              if (_attachedImages.isNotEmpty)
-                GridView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    crossAxisSpacing: 8,
-                    mainAxisSpacing: 8,
-                  ),
-                  itemCount: _attachedImages.length,
-                  itemBuilder: (context, index) {
-                    return Stack(
-                      children: [
-                         ClipRRect(
-                           borderRadius: BorderRadius.circular(8),
-                           child: Image.file(
-                             File(_attachedImages[index]), 
-                             fit: BoxFit.cover,
-                             width: double.infinity, height: double.infinity,
-                           ),
-                         ),
-                         Positioned(
-                           top: 4, right: 4,
-                           child: GestureDetector(
-                             onTap: () {
-                               setState(() => _attachedImages.removeAt(index));
-                               _saveNote();
-                             },
-                             child: const CircleAvatar(
-                               radius: 10,
-                               backgroundColor: Colors.black54,
-                               child: Icon(Icons.close, size: 12, color: Colors.white),
-                             ),
-                           ),
-                         )
-                      ],
-                    );
-                  },
-                ),
-                
-              const SizedBox(height: 16),
-              
-              TextField(
-                controller: _titleController,
-                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                decoration: const InputDecoration(
-                  hintText: 'Title',
-                  border: InputBorder.none,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                DateFormat.yMMMd().format(_createdAt),
-                style: TextStyle(color: Colors.grey[600], fontSize: 12),
-              ),
-              const Divider(),
-              
-              // EDITOR Content
-              _isChecklist ? _buildChecklistEditor() : _buildTextEditor(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTextEditor() {
-    return TextField(
-      controller: _contentController,
-      maxLines: null,
-      keyboardType: TextInputType.multiline,
-      decoration: const InputDecoration(
-        hintText: 'Start typing...',
-        border: InputBorder.none,
-      ),
-    );
-  }
-
-  Widget _buildChecklistEditor() {
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: _checklistItems.length + 1, // +1 for "Add Item" ghost
-      itemBuilder: (context, index) {
-        if (index == _checklistItems.length) {
-          return ListTile(
-            leading: const Icon(Icons.add, color: Colors.grey),
-            title: const Text("List item", style: TextStyle(color: Colors.grey)),
-            onTap: () {
-              setState(() {
-                _checklistItems.add(ChecklistItem(isChecked: false, text: ""));
-              });
-              _syncChecklistToContent();
-            },
-          );
-        }
-        
-        final item = _checklistItems[index];
-        return Row(
-          children: [
-            Checkbox(
-              value: item.isChecked,
-              onChanged: (val) {
-                setState(() => item.isChecked = val ?? false);
-                _syncChecklistToContent();
-              },
-            ),
-            Expanded(
-              child: TextFormField(
-                initialValue: item.text,
-                onChanged: (val) {
-                  item.text = val;
-                  _syncChecklistToContent();
-                },
-                decoration: const InputDecoration(
-                  border: InputBorder.none,
-                  hintText: "Item",
-                ),
-                style: TextStyle(
-                  decoration: item.isChecked ? TextDecoration.lineThrough : null,
-                  color: item.isChecked ? Colors.grey : null,
-                ),
-              ),
-            ),
-             IconButton(
-               icon: const Icon(Icons.close, size: 16),
-               onPressed: () {
-                  setState(() => _checklistItems.removeAt(index));
-                  _syncChecklistToContent();
-               },
-             )
-          ],
-        );
-      },
-    );
-  }
-  
   void _showColorPicker() {
-    // ... (Keep existing implementation)
      showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -418,7 +234,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         return Container(
           padding: const EdgeInsets.all(16),
           decoration: const BoxDecoration(
-            color: Color(0xFF1E1E1E), // Dark grey
+            color: Color(0xFF1E1E1E), 
             borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
           ),
           child: SizedBox(
@@ -459,6 +275,65 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
           ),
         );
       },
+    );
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    final Color bgColor = _color == 0 ? Colors.white : Color(_color);
+    // Calculate contrast color: if background is light, use black text; else white
+    final Color contentColor = bgColor.computeLuminance() > 0.5 ? Colors.black87 : Colors.white;
+
+    return Scaffold(
+      backgroundColor: bgColor,
+      appBar: EditorAppBar(
+        isPinned: _isPinned,
+        isChecklist: _isChecklist,
+        onPinToggle: () {
+          setState(() => _isPinned = !_isPinned);
+          _saveNote();
+        },
+        onChecklistToggle: _toggleChecklistMode,
+        onDelete: _deleteNote,
+        contentColor: contentColor,
+      ),
+      body: EditorCanvas(
+        titleController: _titleController,
+        contentController: _contentController,
+        checklistItems: _checklistItems,
+        isChecklist: _isChecklist,
+        attachedImages: _attachedImages,
+        createdAt: _createdAt,
+        onImageRemove: (index) {
+          setState(() => _attachedImages.removeAt(index));
+          _saveNote();
+        },
+        onChecklistItemChanged: (index, val) {
+          _checklistItems[index].text = val;
+          _syncChecklistToContent();
+        },
+        onChecklistItemChecked: (index, val) {
+          setState(() => _checklistItems[index].isChecked = val);
+          _syncChecklistToContent();
+        },
+        onChecklistItemRemoved: (index) {
+          setState(() => _checklistItems.removeAt(index));
+          _syncChecklistToContent();
+        },
+        onChecklistItemAdded: () {
+          setState(() => _checklistItems.add(ChecklistItem(isChecked: false, text: "")));
+          _syncChecklistToContent();
+        },
+        contentColor: contentColor,
+      ),
+      bottomNavigationBar: EditorToolbar(
+        onAddImage: _pickImage,
+        onColorPalette: _showColorPicker,
+        onFormat: () {}, // Future
+        onUndo: () {},   // Future 
+        onRedo: () {},   // Future
+        contentColor: contentColor,
+      ),
     );
   }
 }
