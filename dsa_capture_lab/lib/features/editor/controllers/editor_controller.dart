@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../core/database/app_database.dart';
+import '../../../shared/database/app_database.dart';
+import '../../../shared/cache/cache_service.dart';
+import '../../dashboard/providers/dashboard_state.dart';
 import '../models/checklist_item.dart';
-import '../../../core/cache/cache_service.dart';
 import '../utils/history_stack.dart';
 import 'rich_text_controller.dart';
 import '../utils/checklist_utils.dart';
@@ -207,38 +207,72 @@ class EditorController {
     }
   }
 
-  Future<void> saveNote({int? folderId}) async {
+  Future<Note?> saveNote({int? folderId}) async {
     try {
       final title = titleController.text.trim();
       // SAVE SERIALIZED CONTENT to preserve diffs/spans
       final content = contentController.serialize();
 
-      if (title.isEmpty && contentController.text.isEmpty && currentNoteId == null && attachedImages.isEmpty) return;
-      // Note: we check contentController.text for emptiness, but save serialized content.
+      if (title.isEmpty && contentController.text.isEmpty && currentNoteId == null && attachedImages.isEmpty) return null;
 
       final db = ref.read(dbProvider);
+      final cache = ref.read(cacheServiceProvider);
 
-      if (currentNoteId != null) {
-        // UPDATE
+      if (currentNoteId != null && currentNoteId! > 0) {
+        // UPDATE existing note (has real DB ID)
         final updatedNote = Note(
           id: currentNoteId!,
           title: title,
           content: content,
           imagePath: imagePath,
           images: attachedImages,
-          fileType: 'rich_text', // Updated file type
-          folderId: folderId, 
-          createdAt: createdAt, 
+          fileType: 'rich_text',
+          folderId: folderId,
+          createdAt: createdAt,
           color: color,
           isPinned: isPinned,
           isChecklist: isChecklist,
-          position: 0, 
+          position: 0,
         );
-        await db.updateNote(updatedNote);
+        
+        // Cache-first update for instant UI
+        cache.updateNote(updatedNote);
+        ref.read(refreshTriggerProvider.notifier).state++;
+        
+        // Background DB update (fire-and-forget)
+        db.updateNote(updatedNote);
+        return updatedNote;
+        
       } else {
-        // CREATE
-        final newId = await db.createNote(
+        // CREATE new note optimistically
+        final tempId = currentNoteId ?? cache.generateTempId();
+        final tempNote = Note(
+          id: tempId,
           title: title.isEmpty ? "Untitled Note" : title,
+          content: content,
+          imagePath: imagePath,
+          images: attachedImages,
+          fileType: 'rich_text',
+          folderId: folderId,
+          createdAt: DateTime.now(),
+          color: color,
+          isPinned: isPinned,
+          isChecklist: isChecklist,
+          position: 999,
+        );
+        
+        // Add to cache IMMEDIATELY for instant display
+        if (currentNoteId == null) {
+          cache.addNoteOptimistic(tempNote);
+          currentNoteId = tempId;
+        } else {
+          cache.updateNote(tempNote);
+        }
+        ref.read(refreshTriggerProvider.notifier).state++;
+        
+        // Persist to DB in background (fire-and-forget)
+        db.createNote(
+          title: tempNote.title,
           content: content,
           imagePath: imagePath,
           images: attachedImages,
@@ -247,12 +281,16 @@ class EditorController {
           color: color,
           isPinned: isPinned,
           isChecklist: isChecklist,
-        );
+        ).then((realId) {
+          cache.resolveTempId(tempId, realId, isFolder: false);
+          currentNoteId = realId; // Update for future saves
+        });
         
-        currentNoteId = newId;
+        return tempNote;
       }
     } catch (e) {
       debugPrint('Error saving note: $e');
+      return null;
     }
   }
 

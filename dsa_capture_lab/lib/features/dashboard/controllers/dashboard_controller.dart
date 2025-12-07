@@ -74,7 +74,7 @@ class DashboardController {
       }
       ref.read(refreshTriggerProvider.notifier).state++;
     } else {
-      // REORDER: Just update DB, cache doesn't track position granularly yet
+      // REORDER: Mutate list, update cache, then persist to DB
       int oldIndex = allItems.indexOf(incomingObj);
       int newIndex = allItems.indexOf(targetItem);
       if (oldIndex == -1 || newIndex == -1) return; 
@@ -84,12 +84,20 @@ class DashboardController {
       if (newIndex < 0) newIndex = 0;
       if (newIndex > allItems.length - 1) newIndex = allItems.length - 1;
       
-      // Update DB positions in background
+      // STEP 1: Actually reorder the list
+      final removed = allItems.removeAt(oldIndex);
+      allItems.insert(newIndex, removed);
+      
+      // STEP 2: Update cache positions AND persist to DB
       for (int i = 0; i < allItems.length; i++) {
         final obj = allItems[i];
         if (obj is Folder) {
+          // Update cache with new position for instant UI feedback
+          cache.updateFolder(obj.copyWith(position: i));
           await db.updateFolderPosition(obj.id, i);
         } else if (obj is Note) {
+          // Update cache with new position for instant UI feedback
+          cache.updateNote(obj.copyWith(position: i));
           await db.updateNotePosition(obj.id, i);
         }
       }
@@ -171,18 +179,34 @@ class DashboardController {
       final cache = ref.read(cacheServiceProvider);
       final currentId = ref.read(currentFolderProvider);
       
-      final newId = await db.createNote(
+      // 1. Generate Temp ID & Add to Cache IMMEDIATELY
+      final tempId = cache.generateTempId();
+      final tempNote = Note(
+        id: tempId,
+        title: name,
+        content: '',
+        imagePath: path,
+        fileType: type,
+        folderId: currentId,
+        createdAt: DateTime.now(),
+        position: 999,
+      );
+      cache.addNoteOptimistic(tempNote);
+      ref.read(refreshTriggerProvider.notifier).state++;
+      
+      // 2. Persist to DB in background (fire-and-forget)
+      db.createNote(
         title: name,
         content: '',
         imagePath: path,
         fileType: type,
         folderId: currentId
-      );
-      
-      // Update cache
-      final newNote = Note(id: newId, title: name, content: '', imagePath: path, fileType: type, folderId: currentId, createdAt: DateTime.now());
-      cache.addNote(newNote);
-      ref.read(refreshTriggerProvider.notifier).state++;
+      ).then((realId) {
+        cache.resolveTempId(tempId, realId, isFolder: false);
+      }).catchError((e) {
+        cache.rollbackTempId(tempId, isFolder: false);
+        ref.read(refreshTriggerProvider.notifier).state++;
+      });
     }
   }
 
@@ -200,7 +224,7 @@ class DashboardController {
     final controller = TextEditingController();
     await showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text("New Folder"),
         content: TextField(
           controller: controller,
@@ -208,31 +232,43 @@ class DashboardController {
           autofocus: true,
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text("Cancel")),
           TextButton(
-            onPressed: () async {
+            onPressed: () {
               final name = controller.text.trim();
               if (name.isNotEmpty) {
                 final db = ref.read(dbProvider);
                 final cache = ref.read(cacheServiceProvider);
                 final currentId = ref.read(currentFolderProvider);
 
-                // 1. Persist to DB first to get ID
-                final newId = await db.createFolder(name, currentId);
-                
-                // 2. Create Folder object
-                final newFolder = Folder(
-                  id: newId, 
-                  name: name, 
-                  parentId: currentId, 
-                  createdAt: DateTime.now()
+                // 1. Generate Temp ID & Add to Cache IMMEDIATELY
+                final tempId = cache.generateTempId();
+                final tempFolder = Folder(
+                  id: tempId,
+                  name: name,
+                  parentId: currentId,
+                  createdAt: DateTime.now(),
+                  position: 999, // High position, will be fixed by DB
                 );
-                
-                // 3. Update Cache & Trigger Refresh
-                cache.addFolder(newFolder);
+                cache.addFolderOptimistic(tempFolder);
                 ref.read(refreshTriggerProvider.notifier).state++;
-                
-                if (context.mounted) Navigator.pop(context);
+
+                // 2. Close dialog IMMEDIATELY (no await!)
+                Navigator.pop(dialogContext);
+
+                // 3. Persist to DB in background (fire-and-forget)
+                db.createFolder(name, currentId).then((realId) {
+                  cache.resolveTempId(tempId, realId, isFolder: true);
+                }).catchError((e) {
+                  // Rollback on failure
+                  cache.rollbackTempId(tempId, isFolder: true);
+                  ref.read(refreshTriggerProvider.notifier).state++;
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("Failed to create folder")),
+                    );
+                  }
+                });
               }
             },
             child: const Text("Create"),

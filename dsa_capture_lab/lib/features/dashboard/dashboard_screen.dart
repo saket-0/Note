@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/database/app_database.dart';
 import '../../core/ui/gradient_background.dart';
 import '../../core/ui/page_routes.dart';
 import '../camera/camera_screen.dart';
@@ -12,7 +11,6 @@ import 'widgets/dashboard_app_bar.dart';
 import 'widgets/dashboard_content.dart';
 import 'widgets/dashboard_drawer.dart';
 import 'widgets/radial_fab_menu.dart';
-import '../../core/cache/cache_service.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
@@ -117,29 +115,21 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                            context, 
                            SlideUpPageRoute(page: CameraScreen(folderId: currentFolderId)),
                          );
-                         // Reload entire cache to ensure fresh data from DB (Simpler than manually syncing everything)
-                         // This fixes "Missing Content"
-                         if (context.mounted) {
-                            final db = ref.read(dbProvider);
-                            await ref.read(cacheServiceProvider).load(db);
-                            ref.read(refreshTriggerProvider.notifier).state++;
-                         }
+                         // Optimistic updates already handled - no cache reload needed!
+                         // The cache was updated in real-time by camera_view_model
                       },
                       backgroundColor: const Color(0xFF202124),
                       child: const Icon(Icons.camera_alt, color: Colors.white),
                     ),
-                    const SizedBox(height: 16), // Tighter spacing
+                    const SizedBox(height: 16),
                     RadialFabMenu(
                       onCreateNote: () async {
                         await Navigator.push(
                           context, 
                           SlideUpPageRoute(page: EditorScreen(folderId: currentFolderId)),
                         );
-                        if (context.mounted) {
-                           final db = ref.read(dbProvider);
-                           await ref.read(cacheServiceProvider).load(db);
-                           ref.read(refreshTriggerProvider.notifier).state++;
-                        }
+                        // Optimistic updates already handled - no cache reload needed!
+                        // The cache was updated in real-time by editor_controller
                       },
                       onImportFile: () => controller.importFile(),
                       onCreateFolder: () => controller.showCreateFolderDialog(),
