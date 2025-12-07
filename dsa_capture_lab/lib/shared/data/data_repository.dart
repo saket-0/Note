@@ -181,6 +181,7 @@ class DataRepository {
     try {
       final realId = await _db.createFolder(name, parentId, position: newPos);
       _resolveTempId(tempId, realId, isFolder: true);
+      _notifyChange(); // Notify UI to rebuild with real IDs
       return realId;
     } catch (e) {
       _rollbackTempId(tempId, isFolder: true);
@@ -242,6 +243,7 @@ class DataRepository {
         position: newPos,
       );
       _resolveTempId(tempId, realId, isFolder: false);
+      _notifyChange(); // Notify UI to rebuild with real IDs
       return realId;
     } catch (e) {
       _rollbackTempId(tempId, isFolder: false);
@@ -358,8 +360,10 @@ class DataRepository {
 
   /// Move note to folder (cache-first)
   Future<void> moveNote(int noteId, int? targetFolderId) async {
+    print('[DataRepository] moveNote called: noteId=$noteId, targetFolderId=$targetFolderId');
     final note = findNote(noteId);
     if (note != null) {
+      print('[DataRepository] Found note: ${note.title}, moving from folderId=${note.folderId} to $targetFolderId');
       // Calculate new position (top of target folder)
       final activeItems = getActiveContent(targetFolderId);
       final newPos = activeItems.isEmpty 
@@ -374,17 +378,22 @@ class DataRepository {
       _removeNoteFromCache(noteId);
       _addNoteToCache(updatedNote);
       _notifyChange();
+      print('[DataRepository] Cache updated, _notifyChange called');
 
       // Update full note to persist folderId and position
       if (noteId > 0) {
         try {
           await _db.moveNote(noteId, targetFolderId, newPosition: newPos);
+          print('[DataRepository] Database updated successfully');
         } catch (e) {
-          print('Error moving note: $e');
+          print('[DataRepository] Error moving note in DB: $e');
         }
       }
+    } else {
+      print('[DataRepository] ERROR: Note not found with ID $noteId! Cannot move.');
     }
   }
+
 
   /// Move folder to parent (cache-first)
   Future<void> moveFolder(int folderId, int? targetParentId) async {

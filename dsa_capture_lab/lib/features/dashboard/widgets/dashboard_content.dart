@@ -7,14 +7,12 @@ import '../providers/dashboard_state.dart';
 import 'dashboard_grid_item.dart';
 
 class DashboardContent extends ConsumerWidget {
-  final List<dynamic> items;
   final DashboardFilter currentFilter;
   final DashboardController controller;
   final ViewMode viewMode;
 
   const DashboardContent({
     super.key,
-    required this.items,
     required this.currentFilter,
     required this.controller,
     required this.viewMode,
@@ -22,6 +20,20 @@ class DashboardContent extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // Get current folder ID
+    final currentFolderId = ref.watch(currentFolderProvider);
+    
+    // CRITICAL: Fetch items directly from provider to ensure fresh data on every rebuild
+    // Previously items were passed as props which could become stale
+    final List<dynamic> items;
+    if (currentFilter == DashboardFilter.active) {
+      items = ref.watch(activeContentProvider(currentFolderId));
+    } else if (currentFilter == DashboardFilter.archived) {
+      items = ref.watch(archivedContentProvider);
+    } else {
+      items = ref.watch(trashContentProvider);
+    }
+    
     if (items.isEmpty) {
       return _buildEmptyState();
     }
@@ -29,14 +41,14 @@ class DashboardContent extends ConsumerWidget {
     // Use PageStorageKey/ValueKey based on CONTEXT (Folder/Filter), not CONTENT.
     // This ensures scroll position is preserved when items are added/removed/modified.
     // Including viewMode ensures we reset if switching list<->grid.
-    final String storageKey = "${currentFilter}_${controller.ref.read(currentFolderProvider) ?? 'root'}_$viewMode";
+    final String storageKey = "${currentFilter}_${currentFolderId ?? 'root'}_$viewMode";
 
     if (viewMode == ViewMode.list) {
       return ListView.separated(
         key: PageStorageKey('list_$storageKey'),
         itemCount: items.length,
         separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemBuilder: (context, index) => _buildItem(context, ref, index),
+        itemBuilder: (context, index) => _buildItem(context, ref, index, items),
       );
     }
     
@@ -46,7 +58,7 @@ class DashboardContent extends ConsumerWidget {
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,
       itemCount: items.length,
-      itemBuilder: (context, index) => _buildItem(context, ref, index),
+      itemBuilder: (context, index) => _buildItem(context, ref, index, items),
     );
   }
 
@@ -64,7 +76,7 @@ class DashboardContent extends ConsumerWidget {
     );
   }
 
-  Widget _buildItem(BuildContext context, WidgetRef ref, int index) {
+  Widget _buildItem(BuildContext context, WidgetRef ref, int index, List<dynamic> items) {
     final item = items[index];
     final String itemKey = (item is Folder) ? "folder_${item.id}" : "note_${item.id}";
     

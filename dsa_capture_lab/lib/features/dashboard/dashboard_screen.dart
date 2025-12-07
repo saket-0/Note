@@ -28,16 +28,6 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final currentFilter = ref.watch(activeFilterProvider);
     final viewMode = ref.watch(viewModeProvider);
     
-    // MEMORY-FIRST: Synchronous reads - NO LOADING STATE!
-    final List<dynamic> items;
-    if (currentFilter == DashboardFilter.active) {
-       items = ref.watch(activeContentProvider(currentFolderId));
-    } else if (currentFilter == DashboardFilter.archived) {
-       items = ref.watch(archivedContentProvider);
-    } else {
-       items = ref.watch(trashContentProvider);
-    }
-    
     // Instantiate Controller
     final controller = DashboardController(context, ref);
     
@@ -89,8 +79,8 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               child: SafeArea(
                 child: Padding(
                   padding: const EdgeInsets.all(12.0),
+                  // DashboardContent now fetches items directly from provider
                   child: DashboardContent(
-                    items: items,
                     currentFilter: currentFilter,
                     controller: controller,
                     viewMode: viewMode,
