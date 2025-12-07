@@ -72,9 +72,19 @@ class _RadialFabMenuState extends State<RadialFabMenu> {
     return CompositedTransformTarget(
       link: _layerLink,
       child: GestureDetector(
-        onLongPress: _openMenu,
-        onLongPressMoveUpdate: (details) => _overlayKey.currentState?.updateDragPosition(details.globalPosition),
-        onLongPressEnd: (_) => _overlayKey.currentState?.handleDragEnd(),
+        onPanStart: (details) {
+            _openMenu();
+            // Need to pass initial position too if we want immediate drag??
+            // Actually _openMenu creates overlay. 
+            // We need to wait for overlay to frame? 
+            // _openMenu is synchronous in state update but overlay frame might be next frame.
+            // But we can just call updateDragPosition immediately after if we have key access.
+            
+            // Wait, if we drag, we want the menu to appear and tracking to start.
+            // onPanUpdate handles tracking.
+        },
+        onPanUpdate: (details) => _overlayKey.currentState?.updateDragPosition(details.globalPosition),
+        onPanEnd: (_) => _overlayKey.currentState?.handleDragEnd(),
         onTap: widget.onCreateNote,
         child: Container(
           width: 56,

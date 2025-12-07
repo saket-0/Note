@@ -72,9 +72,8 @@ class DashboardContent extends ConsumerWidget {
       onDrop: (incomingKey, zone) => controller.handleDrop(incomingKey, item, zone, items),
       onTap: () {
          if (item is Folder) {
-           if (currentFilter == DashboardFilter.active) {
-             ref.read(currentFolderProvider.notifier).state = item.id;
-           }
+           // Allow navigation in all modes (Active, Archive, Trash)
+           ref.read(currentFolderProvider.notifier).state = item.id;
          } else if (item is Note) {
            controller.openFile(item);
          }

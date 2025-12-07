@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/database/app_database.dart';
+import '../controllers/dashboard_controller.dart';
+import 'joystick_menu.dart';
 
-class DashboardGridItem extends StatefulWidget {
+class DashboardGridItem extends ConsumerStatefulWidget {
   final dynamic item;
   final List<dynamic> allItems;
   final Function(String key, String zone) onDrop;
@@ -24,10 +27,10 @@ class DashboardGridItem extends StatefulWidget {
   });
 
   @override
-  State<DashboardGridItem> createState() => _DashboardGridItemState();
+  ConsumerState<DashboardGridItem> createState() => _DashboardGridItemState();
 }
 
-class _DashboardGridItemState extends State<DashboardGridItem> {
+class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
   String _hoverState = 'merge'; // merge, left, right
 
   @override
@@ -265,14 +268,17 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
            }
            
            String previewText = item.content.trim();
-           if (item.fileType == 'rich_text') {
-             try {
-               final json = jsonDecode(previewText);
-               previewText = json['text'] ?? "";
-             } catch (e) {
-               // Fallback if parsing fails or plain text
-             }
-           }
+            // Attempt to parse JSON if it looks like our rich text format, regardless of fileType tag (backward compatibility)
+            if (item.fileType == 'rich_text' || (previewText.startsWith('{') && previewText.contains('"text":'))) {
+              try {
+                final json = jsonDecode(previewText);
+                if (json is Map && json.containsKey('text')) {
+                   previewText = json['text'] ?? "";
+                }
+              } catch (e) {
+                // Fallback if parsing fails
+              }
+            }
            
            if (previewText.isEmpty) previewText = "No content";
 
@@ -335,66 +341,30 @@ class _DashboardGridItemState extends State<DashboardGridItem> {
           ),
 
         // DELETE MENU
+        // JOYSTICK MENU
         if (!isFeedback)
         Positioned(
-            bottom: 4,
-            right: 4,
-            child: PopupMenuButton<String>(
-              icon: Icon(
-                Icons.more_vert, 
-                size: 20, 
-                color: (item is Note && item.color != 0) ? Colors.black54 : Colors.white70
-              ),
-              onSelected: (value) {
-                if (value == 'delete') {
-                  widget.onDelete();
-                } else if (value == 'archive') {
-                  widget.onArchive(true);
-                } else if (value == 'unarchive') {
-                  widget.onArchive(false);
-                } else if (value == 'restore') {
-                  widget.onRestore();
-                }
+            bottom: 12,
+            right: 12,
+            child: JoystickMenu(
+              isFolder: item is Folder,
+              onRename: () {
+                 // Open Rename Logic (Reuse creation dialog or new one)
               },
-              itemBuilder: (context) {
+              onDelete: widget.onDelete,
+              onArchive: () {
                 final bool isArchived = (item is Folder) ? item.isArchived : (item as Note).isArchived;
-                final bool isDeleted = (item is Folder) ? item.isDeleted : (item as Note).isDeleted;
-
-                return [
-                  if (!isDeleted) 
-                    PopupMenuItem(
-                      value: isArchived ? 'unarchive' : 'archive',
-                      child: Row(
-                        children: [
-                          Icon(isArchived ? Icons.unarchive : Icons.archive, color: Colors.blueGrey),
-                          const SizedBox(width: 8),
-                          Text(isArchived ? "Unarchive" : "Archive"),
-                        ],
-                      ),
-                    ),
-                  if (isDeleted)
-                    const PopupMenuItem(
-                      value: 'restore',
-                      child: Row(
-                        children: [
-                          Icon(Icons.restore_from_trash, color: Colors.green),
-                          SizedBox(width: 8),
-                          Text("Restore"),
-                        ],
-                      ),
-                    ),
-                  PopupMenuItem(
-                    value: 'delete',
-                    child: Row(
-                      children: [
-                        const Icon(Icons.delete, color: Colors.red),
-                        const SizedBox(width: 8),
-                        Text(isDeleted ? "Delete Forever" : "Trash"),
-                      ],
-                    ),
-                  ),
-                ];
+                widget.onArchive(!isArchived); // Toggle
               },
+              onCopy: () {
+                // TODO: Implement Copy/Duplicate in Controller
+              },
+              onOpenAs: () {
+                // Open As logic
+                 if (item is Note && item.imagePath != null) {
+                    DashboardController(context, ref).openFile(item); 
+                 }
+              }, 
             ),
           )
       ],

@@ -74,9 +74,51 @@ class CacheService {
   // --- READ Operations (Synchronous!) ---
   
   List<dynamic> getActiveContent(int? folderId) {
-    final folders = _foldersByParent[folderId] ?? [];
-    final notes = _notesByFolder[folderId] ?? [];
-    return [...folders, ...notes];
+    // 1. Get from Active Maps
+    final activeFolders = _foldersByParent[folderId] ?? [];
+    final activeNotes = _notesByFolder[folderId] ?? [];
+    
+    // 2. Get from Archive (Linear search, but cache is in-memory so fast enough for now)
+    final archivedFolders = _archivedItems.where((i) => i is Folder && i.parentId == folderId);
+    final archivedNotes = _archivedItems.where((i) => i is Note && i.folderId == folderId);
+    
+    // 3. Get from Trash
+    final trashFolders = _trashedItems.where((i) => i is Folder && i.parentId == folderId);
+    final trashNotes = _trashedItems.where((i) => i is Note && i.folderId == folderId);
+    
+    // Combine ALL (Function is "getContent", filtering is done by Dashboard View if needed? 
+    // Wait, if I am in "Active" filter, I only want active items.
+    // If I am in "Archive" filter, I want archived items? 
+    // actually, if I am navigating INSIDE a folder, the folder itself dictates the context?
+    // User said: "open a folder in the archive section".
+    // If a folder is archived, its children are effectively hidden even if they are not explicitly marked "archived" in DB? 
+    // Or does "Archive Folder" cascade archive children? DB logic says "No cascade" usually unless explicit.
+    // Let's assume children might still be "active" but just inside an archived folder.
+    // OR children are also archived.
+    // To support "Navigation inside archive", we should probably show EVERYTHING inside that folder.
+    
+    final combined = [
+      ...activeFolders, ...activeNotes,
+      ...archivedFolders, ...archivedNotes,
+      ...trashFolders, ...trashNotes
+    ];
+    
+    // Sort combined list:
+    // 1. Pinned Notes Top
+    // 2. CreatedAt Descending (Newest First)
+    combined.sort((a, b) {
+      final bool aPinned = (a is Note) ? a.isPinned : false;
+      final bool bPinned = (b is Note) ? b.isPinned : false;
+      
+      if (aPinned != bPinned) return aPinned ? -1 : 1;
+      
+      // Both pinned or both not pinned: Sort by Date
+      final DateTime aDate = (a as dynamic).createdAt;
+      final DateTime bDate = (b as dynamic).createdAt;
+      return bDate.compareTo(aDate); // Descending
+    });
+    
+    return combined;
   }
   
   List<dynamic> getArchivedContent() => List.from(_archivedItems);

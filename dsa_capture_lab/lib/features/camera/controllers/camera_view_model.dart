@@ -2,31 +2,9 @@ import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../dashboard/providers/dashboard_state.dart';
 import '../../../core/database/app_database.dart';
+import '../models/batch_camera_state.dart';
+export '../models/batch_camera_state.dart';
 
-// State Class
-class BatchCameraState {
-  final bool isBatchMode;
-  final List<Note> capturedItems; // Changed to Note objects
-  final int? activeBatchFolderId; // To track current session
-
-  BatchCameraState({
-    required this.isBatchMode, 
-    required this.capturedItems,
-    this.activeBatchFolderId,
-  });
-
-  BatchCameraState copyWith({
-    bool? isBatchMode, 
-    List<Note>? capturedItems,
-    int? activeBatchFolderId,
-  }) {
-    return BatchCameraState(
-      isBatchMode: isBatchMode ?? this.isBatchMode,
-      capturedItems: capturedItems ?? this.capturedItems,
-      activeBatchFolderId: activeBatchFolderId ?? this.activeBatchFolderId,
-    );
-  }
-}
 
 // Provider
 final cameraViewModelProvider = StateNotifierProvider.autoDispose<CameraViewModel, BatchCameraState>((ref) {

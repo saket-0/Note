@@ -8,6 +8,8 @@ import '../models/checklist_item.dart';
 import '../../../core/cache/cache_service.dart';
 import '../utils/history_stack.dart';
 import 'rich_text_controller.dart';
+import '../utils/checklist_utils.dart';
+import '../models/formatting_span.dart';
 
 class EditorController {
   final WidgetRef ref;
@@ -160,26 +162,14 @@ class EditorController {
   }
 
   void _parseContentToChecklist() {
-    // Basic checklists parse from plain text for now.
-    // Ideally we adapt checklist mode to work with formatted text too?
-    // For now, use raw text.
-    checklistItems = contentController.text.split('\n').where((line) => line.isNotEmpty).map((line) {
-      bool checked = line.startsWith('[x] ');
-      String text = line.replaceFirst(RegExp(r'^\[[ x]\] '), '');
-      return ChecklistItem(isChecked: checked, text: text);
-    }).toList();
+    checklistItems = ChecklistUtils.parse(contentController.text);
   }
 
   void syncChecklistToContent() {
-    String content = checklistItems.map((item) {
-      return "${item.isChecked ? '[x]' : '[ ]'} ${item.text}";
-    }).join('\n');
+    String content = ChecklistUtils.toContent(checklistItems);
     
     if (contentController.text != content) {
       _isInternalChange = true;
-      // Load as plain text (clears formatting) because checklists don't support rich text yet?
-      // Or we can try to preserve?
-      // Let's just load plain.
       contentController.text = content; 
       _isInternalChange = false;
       _history.push(contentController.serialize());
@@ -197,7 +187,7 @@ class EditorController {
            checklistItems = [ChecklistItem(isChecked: false, text: "")];
         }
       } else {
-        contentController.text = checklistItems.map((e) => e.text).join('\n');
+        contentController.text = ChecklistUtils.toContent(checklistItems);
       }
       saveNote();
     });

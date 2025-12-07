@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../controllers/rich_text_controller.dart'; 
+import '../models/formatting_span.dart'; 
 
 class EditorToolbar extends StatelessWidget {
   final VoidCallback onAddImage;

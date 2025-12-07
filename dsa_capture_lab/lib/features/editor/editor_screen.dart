@@ -9,6 +9,7 @@ import 'widgets/editor_app_bar.dart';
 import 'widgets/editor_canvas.dart';
 import 'widgets/editor_toolbar.dart';
 import 'controllers/rich_text_controller.dart';
+import 'models/formatting_span.dart';
 
 class EditorScreen extends ConsumerStatefulWidget {
   final int? folderId;
@@ -189,6 +190,8 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
       },
       child: Scaffold(
         backgroundColor: bgColor,
+        // Ensure resizeToAvoidBottomInset is true (default)
+        resizeToAvoidBottomInset: true, 
         appBar: EditorAppBar(
           isPinned: _controller.isPinned,
           isChecklist: _controller.isChecklist,
@@ -200,52 +203,59 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
           onDelete: _controller.deleteNote,
           contentColor: contentColor,
         ),
-        body: EditorCanvas(
-          titleController: _titleController,
-          contentController: _contentController,
-          checklistItems: _controller.checklistItems,
-          isChecklist: _controller.isChecklist,
-          attachedImages: _controller.attachedImages,
-          createdAt: _controller.createdAt,
-          onImageRemove: (index) {
-            setState(() => _controller.attachedImages.removeAt(index));
-            _controller.saveNote(folderId: widget.folderId);
-          },
-          onChecklistItemChanged: (index, val) {
-            _controller.checklistItems[index].text = val;
-            _controller.syncChecklistToContent();
-          },
-          onChecklistItemChecked: (index, val) {
-            setState(() => _controller.checklistItems[index].isChecked = val);
-            _controller.syncChecklistToContent();
-          },
-          onChecklistItemRemoved: (index) {
-            setState(() => _controller.checklistItems.removeAt(index));
-            _controller.syncChecklistToContent();
-          },
-          onChecklistItemAdded: () {
-            setState(() => _controller.checklistItems.add(ChecklistItem(isChecked: false, text: "")));
-            _controller.syncChecklistToContent();
-          },
-          contentColor: contentColor,
-        ),
-        bottomNavigationBar: EditorToolbar(
-          onAddImage: _controller.pickImage,
-          onColorPalette: _showColorPicker,
-          onFormatToggle: _toggleFormatToolbar,
-          onUndo: _controller.undo, 
-          onRedo: _controller.redo,
-          canUndo: _controller.canUndo,
-          canRedo: _controller.canRedo,
-          contentColor: contentColor,
-          isFormattingMode: _showFormattingToolbar,
-          activeStyles: _contentController.currentStyles,
-          onH1: _controller.formatH1,
-          onH2: _controller.formatH2,
-          onBold: _controller.formatBold,
-          onItalic: _controller.formatItalic,
-          onUnderline: _controller.formatUnderline,
-          onClearFormatting: _controller.clearFormatting,
+        body: Column(
+          children: [
+            Expanded(
+              child: EditorCanvas(
+                titleController: _titleController,
+                contentController: _contentController,
+                checklistItems: _controller.checklistItems,
+                isChecklist: _controller.isChecklist,
+                attachedImages: _controller.attachedImages,
+                createdAt: _controller.createdAt,
+                onImageRemove: (index) {
+                  setState(() => _controller.attachedImages.removeAt(index));
+                  _controller.saveNote(folderId: widget.folderId);
+                },
+                onChecklistItemChanged: (index, val) {
+                  _controller.checklistItems[index].text = val;
+                  _controller.syncChecklistToContent();
+                },
+                onChecklistItemChecked: (index, val) {
+                  setState(() => _controller.checklistItems[index].isChecked = val);
+                  _controller.syncChecklistToContent();
+                },
+                onChecklistItemRemoved: (index) {
+                  setState(() => _controller.checklistItems.removeAt(index));
+                  _controller.syncChecklistToContent();
+                },
+                onChecklistItemAdded: () {
+                  setState(() => _controller.checklistItems.add(ChecklistItem(isChecked: false, text: "")));
+                  _controller.syncChecklistToContent();
+                },
+                contentColor: contentColor,
+              ),
+            ),
+            // TOOLBAR MOVED TO BODY
+            EditorToolbar(
+              onAddImage: _controller.pickImage,
+              onColorPalette: _showColorPicker,
+              onFormatToggle: _toggleFormatToolbar,
+              onUndo: _controller.undo, 
+              onRedo: _controller.redo,
+              canUndo: _controller.canUndo,
+              canRedo: _controller.canRedo,
+              contentColor: contentColor,
+              isFormattingMode: _showFormattingToolbar,
+              activeStyles: _contentController.currentStyles,
+              onH1: _controller.formatH1,
+              onH2: _controller.formatH2,
+              onBold: _controller.formatBold,
+              onItalic: _controller.formatItalic,
+              onUnderline: _controller.formatUnderline,
+              onClearFormatting: _controller.clearFormatting,
+            ),
+          ],
         ),
       ),
     );

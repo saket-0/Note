@@ -174,18 +174,34 @@ class DashboardAppBar extends ConsumerWidget implements PreferredSizeWidget {
                 const SizedBox(height: 12),
                 // Results
                 Expanded(
-                  child: filtered.isEmpty
+                  child: filtered.isEmpty && query.isNotEmpty
                       ? Center(
                           child: Text(
-                            query.isEmpty ? 'Type to search' : 'No results',
+                            'No results',
                             style: TextStyle(color: Colors.white.withOpacity(0.5)),
                           ),
                         )
                       : ListView.builder(
                           controller: scrollController,
-                          itemCount: filtered.length,
+                          itemCount: query.isEmpty ? (allNotes.length > 5 ? 5 : allNotes.length) : filtered.length,
                           itemBuilder: (_, i) {
-                            final note = filtered[i];
+                            // If query empty, show recent (allNotes is already sorted by date in CacheService if I recall? 
+                            // Wait, CacheService.getAllNotes() returns flat list. I should sort it here to be safe for "Recent").
+                            
+                            // Let's sort locally for now if not already. 
+                            // Actually, let's just use filtered list logic.
+                            
+                            List<Note> displayList;
+                            if (query.isEmpty) {
+                               displayList = List.from(allNotes)..sort((a,b) => b.createdAt.compareTo(a.createdAt));
+                               displayList = displayList.take(5).toList();
+                            } else {
+                               displayList = filtered;
+                            }
+                            
+                            if (displayList.isEmpty) return const SizedBox.shrink();
+
+                            final note = displayList[i];
                             return ListTile(
                               leading: Icon(
                                 note.isChecklist ? Icons.checklist : Icons.note,
