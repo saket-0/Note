@@ -16,9 +16,9 @@ final activeFilterProvider = StateProvider<DashboardFilter>((ref) => DashboardFi
 final viewModeProvider = StateProvider<ViewMode>((ref) => ViewMode.grid);
 final currentFolderProvider = StateProvider<int?>((ref) => null);
 
-/// Key of an item that was just moved and should be removed from grid immediately
-/// Format: "note_123" or "folder_456". Set to null after consumption.
-final pendingRemovalKeyProvider = StateProvider<String?>((ref) => null);
+/// Keys of items that were just moved and should be removed from grid immediately
+/// Format: {"note_123", "folder_456"}. Cleared after consumption.
+final pendingRemovalKeysProvider = StateProvider<Set<String>>((ref) => {});
 
 // ===========================================
 // REACTIVE DATA PROVIDERS

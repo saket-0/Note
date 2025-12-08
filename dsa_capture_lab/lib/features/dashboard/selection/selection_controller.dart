@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../shared/data/data_repository.dart';
 import '../../../../shared/domain/entities/entities.dart';
 import '../../../../shared/services/folder_service.dart';
+import '../providers/dashboard_state.dart';
 import 'providers/selection_providers.dart';
 
 /// Controller for selection-related actions
@@ -175,6 +176,9 @@ class SelectionController {
       return null;
     }
     
+    // Collect keys BEFORE moving (for immediate UI removal)
+    final keysToRemove = selectedItems.toSet();
+    
     try {
       final folderId = await folderService.createFolderFromSelection(
         items: items,
@@ -184,6 +188,10 @@ class SelectionController {
       
       if (folderId != null) {
         HapticFeedback.mediumImpact();
+        
+        // Signal immediate removal from grid
+        _ref.read(pendingRemovalKeysProvider.notifier).state = keysToRemove;
+        
         clearSelection();
       }
       return folderId;

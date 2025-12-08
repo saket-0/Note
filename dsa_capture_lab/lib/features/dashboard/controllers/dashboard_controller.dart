@@ -395,7 +395,7 @@ class DashboardController {
     }
     
     // Signal immediate removal from grid
-    ref.read(pendingRemovalKeyProvider.notifier).state = incomingKey;
+    ref.read(pendingRemovalKeysProvider.notifier).state = {incomingKey};
     
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

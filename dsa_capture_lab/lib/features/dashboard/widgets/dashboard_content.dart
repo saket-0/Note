@@ -51,16 +51,16 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
     }
     
     // Watch for pending removal (from move-to-parent or other cross-widget moves)
-    final pendingRemovalKey = ref.watch(pendingRemovalKeyProvider);
-    if (pendingRemovalKey != null) {
-      // Remove item from local list and clear the pending key
+    final pendingRemovalKeys = ref.watch(pendingRemovalKeysProvider);
+    if (pendingRemovalKeys.isNotEmpty) {
+      // Remove items from local list and clear the pending keys
       _localItems.removeWhere((it) {
         final key = (it is Folder) ? "folder_${it.id}" : "note_${it.id}";
-        return key == pendingRemovalKey;
+        return pendingRemovalKeys.contains(key);
       });
-      // Clear the pending key (schedule for after build)
+      // Clear the pending keys (schedule for after build)
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        ref.read(pendingRemovalKeyProvider.notifier).state = null;
+        ref.read(pendingRemovalKeysProvider.notifier).state = {};
       });
     }
 
