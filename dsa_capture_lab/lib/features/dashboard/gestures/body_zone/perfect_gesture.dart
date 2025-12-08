@@ -13,6 +13,8 @@ library;
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../selection/selection.dart';
 
 /// Configuration constants - DO NOT CHANGE without UX testing
 class GestureConfig {
@@ -35,16 +37,19 @@ enum GestureState {
 /// The key insight: Long press (350ms) selects but does NOT immediately drag.
 /// User must move > 10px AFTER selection to start dragging.
 /// 
+/// IMPORTANT: This widget reads isSelectionModeProvider DIRECTLY in gesture
+/// handlers to avoid stale state bugs. Do NOT rely on passed-in isSelectionMode.
+/// 
 /// Normal Mode:
 /// - Tap (<200ms): Open item
 /// - Hold (350ms): Enter selection + haptic (NO movement yet)
 /// - Hold + Move (>10px): Start dragging
 /// 
-/// Selection Mode:
+/// Selection Mode (locked grid):
 /// - Tap (<200ms): Toggle selection
-/// - Hold (350ms): Visual "lift" ready to move
-/// - Hold + Move (>10px): Drag ALL selected items
-class PerfectGestureDetector extends StatefulWidget {
+/// - Hold (350ms): Visual feedback only
+/// - Movement: Treated as scroll, NOT drag
+class PerfectGestureDetector extends ConsumerStatefulWidget {
   final Widget child;
   
   /// Called when user taps (< 200ms, no movement)
@@ -66,10 +71,7 @@ class PerfectGestureDetector extends StatefulWidget {
   /// Use this to hide/show the top bar
   final void Function(bool isDragging)? onDragStateChanged;
   
-  /// Whether we're currently in selection mode
-  final bool isSelectionMode;
-  
-  /// Whether this item is currently selected
+  /// Whether this item is currently selected (for visual feedback)
   final bool isSelected;
   
   const PerfectGestureDetector({
@@ -81,15 +83,14 @@ class PerfectGestureDetector extends StatefulWidget {
     this.onDragUpdate,
     this.onDragEnd,
     this.onDragStateChanged,
-    this.isSelectionMode = false,
     this.isSelected = false,
   });
   
   @override
-  State<PerfectGestureDetector> createState() => _PerfectGestureDetectorState();
+  ConsumerState<PerfectGestureDetector> createState() => _PerfectGestureDetectorState();
 }
 
-class _PerfectGestureDetectorState extends State<PerfectGestureDetector> {
+class _PerfectGestureDetectorState extends ConsumerState<PerfectGestureDetector> {
   GestureState _state = GestureState.idle;
   Offset? _startPosition;
   Offset? _longPressPosition; // Position when long press triggered
@@ -128,9 +129,14 @@ class _PerfectGestureDetectorState extends State<PerfectGestureDetector> {
     _state = GestureState.selected;
     _longPressPosition = _startPosition; // Remember where we were when selected
     
+    // READ LIVE STATE: Check current selection mode from provider
+    // Guard: ensure widget is still mounted before accessing ref
+    if (!mounted) return;
+    final isSelectionMode = ref.read(isSelectionModeProvider);
+    
     // Haptic feedback
-    if (widget.isSelectionMode) {
-      // Already in selection mode - light haptic for "ready to move"
+    if (isSelectionMode) {
+      // Already in selection mode - light haptic for "ready"
       HapticFeedback.lightImpact();
     } else {
       // Entering selection mode - heavy haptic
@@ -162,9 +168,16 @@ class _PerfectGestureDetectorState extends State<PerfectGestureDetector> {
       case GestureState.selected:
         // Item is selected, waiting for drag threshold
         
+        // Guard: ensure widget is still mounted before accessing ref
+        if (!mounted) return;
+        
+        // READ LIVE STATE: Check current selection mode from provider
+        // This fixes the 'stale state' bug where other items don't know selection mode changed
+        final isSelectionMode = ref.read(isSelectionModeProvider);
+        
         // CRITICAL: In Selection Mode, disable ALL drag-to-reorder logic
         // Grid should be locked. Movement = scroll, not drag.
-        if (widget.isSelectionMode) {
+        if (isSelectionMode) {
           // In selection mode: treat movement as scroll, cancel gesture
           if (distanceFromStart > GestureConfig.dragSlop) {
             _cancelGesture(); // Let parent ScrollView handle it

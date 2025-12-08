@@ -224,8 +224,32 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
             builder: (context, candidates, rejects) {
                final bool showMergeRequest = _hoverState == 'merge';
                
-               // PerfectGestureDetector handles the 350ms "lock" before drag unlocks
-               // Works in BOTH normal and selection mode
+               // Build the gesture-aware content
+               Widget gestureContent = PerfectGestureDetector(
+                 isSelected: widget.isSelected,
+                 onTap: widget.onTap,
+                 onLongPress: widget.onLongPress,
+                 onDragStateChanged: widget.onDragStateChanged,
+                 child: AnimatedScale(
+                   scale: scale,
+                   duration: const Duration(milliseconds: 100),
+                   child: Container(
+                     decoration: showMergeRequest ? BoxDecoration(
+                       border: Border.all(color: Colors.blueAccent, width: 4),
+                       borderRadius: BorderRadius.circular(15)
+                     ) : null,
+                     child: _buildContent(isSelected: widget.isSelected),
+                   ),
+                 ),
+               );
+               
+               // CRITICAL: When in selection mode, completely DISABLE drag-to-reorder
+               // Grid is LOCKED. Only taps work (to toggle selection).
+               if (widget.isSelectionMode) {
+                 return gestureContent; // No LongPressDraggable wrapper
+               }
+               
+               // Normal mode: Enable drag-to-reorder with LongPressDraggable
                return LongPressDraggable<String>(
                   data: dragKey,
                   delay: const Duration(milliseconds: 350), // 350ms lock
@@ -250,25 +274,7 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
                     child: _buildContent(),
                   ),
                   onDragCompleted: () {},
-                  // PerfectGestureDetector: distinguishes tap vs long-press vs drag
-                  child: PerfectGestureDetector(
-                    isSelectionMode: widget.isSelectionMode,
-                    isSelected: widget.isSelected,
-                    onTap: widget.onTap,
-                    onLongPress: widget.onLongPress,
-                    onDragStateChanged: widget.onDragStateChanged,
-                    child: AnimatedScale(
-                      scale: scale,
-                      duration: const Duration(milliseconds: 100),
-                      child: Container(
-                        decoration: showMergeRequest ? BoxDecoration(
-                          border: Border.all(color: Colors.blueAccent, width: 4),
-                          borderRadius: BorderRadius.circular(15)
-                        ) : null,
-                        child: _buildContent(isSelected: widget.isSelected),
-                      ),
-                    ),
-                  ),
+                  child: gestureContent,
                );
             },
           ),
