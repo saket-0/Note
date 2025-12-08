@@ -16,6 +16,9 @@ final activeFilterProvider = StateProvider<DashboardFilter>((ref) => DashboardFi
 final viewModeProvider = StateProvider<ViewMode>((ref) => ViewMode.grid);
 final currentFolderProvider = StateProvider<int?>((ref) => null);
 
+/// Tracks if the glide menu is currently open (for scroll-locking)
+final isGlideMenuOpenProvider = StateProvider<bool>((ref) => false);
+
 /// Keys of items that were just moved and should be removed from grid immediately
 /// Format: {"note_123", "folder_456"}. Cleared after consumption.
 final pendingRemovalKeysProvider = StateProvider<Set<String>>((ref) => {});

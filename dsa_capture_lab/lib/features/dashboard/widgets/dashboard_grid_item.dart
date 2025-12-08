@@ -9,6 +9,7 @@ import '../../../shared/services/folder_service.dart';
 import '../gestures/body_zone/perfect_gesture.dart';
 import '../gestures/glide_menu/glide_menu_overlay.dart' as glide;
 import 'package:share_plus/share_plus.dart';
+import '../providers/dashboard_state.dart';
 
 class DashboardGridItem extends ConsumerStatefulWidget {
   final dynamic item;
@@ -99,22 +100,42 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
   void _showGlideMenu(PointerDownEvent event) {
      HapticFeedback.mediumImpact();
      
+     // Lock scrolling while menu is open
+     ref.read(isGlideMenuOpenProvider.notifier).state = true;
+     
      final RenderBox iconBox = _iconKey.currentContext!.findRenderObject() as RenderBox;
      final Offset iconCenter = iconBox.localToGlobal(iconBox.size.center(Offset.zero));
      
      _overlayKey = GlobalKey<glide.GlideMenuOverlayState>();
      
-     // Create menu items based on item type
+     // Get the current filter to determine which menu options to show
+     final filter = ref.read(activeFilterProvider);
+     
+     // Create menu items based on filter context
      final item = widget.item;
      final List<glide.GlideMenuItem> items;
      
-     if (item is Folder) {
+     if (filter == DashboardFilter.trash) {
+       // Trash context: Restore + Delete Forever
+       items = glide.GlideMenuItems.forTrash(
+         onRestore: widget.onRestore,
+         onDeleteForever: widget.onDelete, // Controller handles permanent flag based on filter
+       );
+     } else if (filter == DashboardFilter.archived) {
+       // Archive context: Unarchive + Delete
+       items = glide.GlideMenuItems.forArchived(
+         onUnarchive: () => widget.onArchive(false), // false = remove from archive
+         onDelete: widget.onDelete,
+       );
+     } else if (item is Folder) {
+       // Active: Folder menu
        items = glide.GlideMenuItems.forFolder(
          onRename: () => _handleRename(),
          onShare: () => _handleShare(),
          onDelete: widget.onDelete,
        );
      } else if (item is Note && item.fileType == 'image') {
+       // Active: Image note menu
        items = glide.GlideMenuItems.forImageNote(
          onPin: () => _handlePin(),
          onRename: () => _handleRename(),
@@ -122,6 +143,7 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
          onDelete: widget.onDelete,
        );
      } else {
+       // Active: Text note menu
        items = glide.GlideMenuItems.forTextNote(
          onPin: () => _handlePin(),
          onColor: () => _showColorPicker(),
@@ -130,9 +152,33 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
        );
      }
      
+     // Store anchor position for drag calculations in the barrier
+     final menuAnchor = iconCenter;
+     
      _menuOverlay = OverlayEntry(
        builder: (context) => Stack(
          children: [
+           // Full-screen barrier to block scrolling and capture all pointer events
+           Positioned.fill(
+             child: Listener(
+               behavior: HitTestBehavior.opaque, // Captures ALL pointer events
+               onPointerMove: (event) {
+                 // Forward drag events to menu
+                 final distanceUp = menuAnchor.dy - event.position.dy;
+                 _overlayKey.currentState?.updateDragY(distanceUp);
+               },
+               onPointerUp: (event) {
+                 // Execute action on release
+                 _overlayKey.currentState?.executeAndClose();
+               },
+               onPointerCancel: (event) {
+                 // Close on cancel (e.g., system gesture)
+                 _closeGlideMenu();
+               },
+               child: Container(color: Colors.transparent),
+             ),
+           ),
+           // The actual menu
            glide.GlideMenuOverlay(
              key: _overlayKey,
              anchorPosition: iconCenter,
@@ -244,6 +290,9 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
   void _closeGlideMenu() {
      _menuOverlay?.remove();
      _menuOverlay = null;
+     
+     // Unlock scrolling
+     ref.read(isGlideMenuOpenProvider.notifier).state = false;
   }
 
   @override
@@ -381,6 +430,7 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
              onPointerDown: _showGlideMenu,
              onPointerMove: _updateGlideMenu,
              onPointerUp: _endGlideMenu,
+             onPointerCancel: (_) => _closeGlideMenu(), // Safety: close on cancel
              // Hitbox: 48x48 invisible container with Icon centered
              child: Container(
                key: _iconKey,

@@ -43,6 +43,12 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
   Widget build(BuildContext context) {
     final currentFolderId = ref.watch(currentFolderProvider);
     
+    // Scroll lock when glide menu is open
+    final isMenuOpen = ref.watch(isGlideMenuOpenProvider);
+    final ScrollPhysics scrollPhysics = isMenuOpen 
+        ? const NeverScrollableScrollPhysics() 
+        : const AlwaysScrollableScrollPhysics();
+    
     // Detect Folder Change OR Filter Change & Reset
     if (currentFolderId != _lastFolderId || widget.currentFilter != _lastFilter) {
       _lastFolderId = currentFolderId;
@@ -99,6 +105,7 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
     if (widget.viewMode == ViewMode.list) {
       return ListView.separated(
         key: PageStorageKey('list_$storageKey'),
+        physics: scrollPhysics,
         itemCount: _localItems.length,
         separatorBuilder: (_, __) => const SizedBox(height: 12),
         itemBuilder: (context, index) => _buildItem(index, _localItems),
@@ -107,6 +114,7 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
     
     return MasonryGridView.count(
       key: PageStorageKey('grid_$storageKey'),
+      physics: scrollPhysics,
       crossAxisCount: 2,
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,

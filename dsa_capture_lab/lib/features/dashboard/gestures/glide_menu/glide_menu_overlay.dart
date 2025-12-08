@@ -291,6 +291,48 @@ class GlideMenuItems {
     ];
   }
   
+  /// Menu for trashed items: [Delete Forever, Restore]
+  static List<GlideMenuItem> forTrash({
+    required VoidCallback onRestore,
+    required VoidCallback onDeleteForever,
+  }) {
+    return [
+      GlideMenuItem(
+        label: 'Delete Forever',
+        icon: Icons.delete_forever,
+        color: Colors.redAccent,
+        onExecute: onDeleteForever,
+      ),
+      GlideMenuItem(
+        label: 'Restore',
+        icon: Icons.restore,
+        color: Colors.tealAccent,
+        onExecute: onRestore,
+      ),
+    ];
+  }
+  
+  /// Menu for archived items: [Delete, Unarchive]
+  static List<GlideMenuItem> forArchived({
+    required VoidCallback onUnarchive,
+    required VoidCallback onDelete,
+  }) {
+    return [
+      GlideMenuItem(
+        label: 'Delete',
+        icon: Icons.delete_outline,
+        color: Colors.red.shade400,
+        onExecute: onDelete,
+      ),
+      GlideMenuItem(
+        label: 'Unarchive',
+        icon: Icons.unarchive,
+        color: Colors.amberAccent,
+        onExecute: onUnarchive,
+      ),
+    ];
+  }
+  
   /// Legacy alias for forTextNote
   static List<GlideMenuItem> forNote({
     required VoidCallback onPin,
