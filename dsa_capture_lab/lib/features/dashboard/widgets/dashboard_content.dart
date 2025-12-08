@@ -6,7 +6,7 @@ import '../controllers/dashboard_controller.dart';
 import '../providers/dashboard_state.dart';
 import 'dashboard_grid_item.dart';
 
-class DashboardContent extends ConsumerWidget {
+class DashboardContent extends ConsumerStatefulWidget {
   final DashboardFilter currentFilter;
   final DashboardController controller;
   final ViewMode viewMode;
@@ -19,37 +19,57 @@ class DashboardContent extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // Get current folder ID
+  ConsumerState<DashboardContent> createState() => _DashboardContentState();
+}
+
+class _DashboardContentState extends ConsumerState<DashboardContent> {
+  // Local state for optimistic reordering (The "Visual Order")
+  List<dynamic> _localItems = [];
+  bool _isDragging = false;
+  String? _draggingId; // "note_123" or "folder_456"
+
+  @override
+  void didUpdateWidget(DashboardContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+     // If filter changes, we must reset. 
+     // We rely on build() to sync data, but if we are NOT dragging, we should sync.
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final currentFolderId = ref.watch(currentFolderProvider);
     
-    // CRITICAL: Fetch items directly from provider to ensure fresh data on every rebuild
-    // Previously items were passed as props which could become stale
-    final List<dynamic> items;
-    if (currentFilter == DashboardFilter.active) {
-      items = ref.watch(activeContentProvider(currentFolderId));
-    } else if (currentFilter == DashboardFilter.archived) {
-      items = ref.watch(archivedContentProvider);
+    // Fetch Source of Truth
+    final List<dynamic> sourceItems;
+    if (widget.currentFilter == DashboardFilter.active) {
+      sourceItems = ref.watch(activeContentProvider(currentFolderId));
+    } else if (widget.currentFilter == DashboardFilter.archived) {
+      sourceItems = ref.watch(archivedContentProvider);
     } else {
-      items = ref.watch(trashContentProvider);
+      sourceItems = ref.watch(trashContentProvider);
     }
     
-    if (items.isEmpty) {
+    // Sync Local State if NOT dragging
+    // We check if lists are different length or different IDs to detect external updates
+    if (!_isDragging) {
+      _errorMessageIfMismatch(sourceItems);
+      _localItems = List.from(sourceItems);
+    }
+    
+    if (_localItems.isEmpty) {
       return _buildEmptyState();
     }
     
-    // Use PageStorageKey/ValueKey based on CONTEXT (Folder/Filter), not CONTENT.
-    // This ensures scroll position is preserved when items are added/removed/modified.
-    // Including viewMode ensures we reset if switching list<->grid.
-    // Including items.length helps force grid rebuild when content changes.
-    final String storageKey = "${currentFilter}_${currentFolderId ?? 'root'}_${viewMode}_${items.length}";
+    // Key strategy: Use a key that changes when FILTER or FOLDER changes, 
+    // but DOES NOT change when items are reordered (to preserve scroll/state).
+    final String storageKey = "${widget.currentFilter}_${currentFolderId ?? 'root'}_${widget.viewMode}";
 
-    if (viewMode == ViewMode.list) {
+    if (widget.viewMode == ViewMode.list) {
       return ListView.separated(
         key: PageStorageKey('list_$storageKey'),
-        itemCount: items.length,
+        itemCount: _localItems.length,
         separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemBuilder: (context, index) => _buildItem(context, ref, index, items),
+        itemBuilder: (context, index) => _buildItem(index, _localItems),
       );
     }
     
@@ -58,15 +78,20 @@ class DashboardContent extends ConsumerWidget {
       crossAxisCount: 2,
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,
-      itemCount: items.length,
-      itemBuilder: (context, index) => _buildItem(context, ref, index, items),
+      itemCount: _localItems.length,
+      itemBuilder: (context, index) => _buildItem(index, _localItems),
     );
+  }
+
+  void _errorMessageIfMismatch(List<dynamic> source) {
+    // Optional: Check for drift? 
+    // Usually standard assignment is fine.
   }
 
   Widget _buildEmptyState() {
     String emptyMsg = "Empty Folder.\nAdd something!";
-    if (currentFilter == DashboardFilter.archived) emptyMsg = "No archived items";
-    if (currentFilter == DashboardFilter.trash) emptyMsg = "Trash is empty";
+    if (widget.currentFilter == DashboardFilter.archived) emptyMsg = "No archived items";
+    if (widget.currentFilter == DashboardFilter.trash) emptyMsg = "Trash is empty";
     
     return Center(
       child: Text(
@@ -77,26 +102,95 @@ class DashboardContent extends ConsumerWidget {
     );
   }
 
-  Widget _buildItem(BuildContext context, WidgetRef ref, int index, List<dynamic> items) {
+  Widget _buildItem(int index, List<dynamic> items) {
     final item = items[index];
     final String itemKey = (item is Folder) ? "folder_${item.id}" : "note_${item.id}";
-    
-    return DashboardGridItem(
-      key: ValueKey(itemKey), 
-      item: item,
-      allItems: items,
-      onDrop: (incomingKey, zone) => controller.handleDrop(incomingKey, item, zone, items),
-      onTap: () {
-         if (item is Folder) {
-           // Allow navigation in all modes (Active, Archive, Trash)
-           ref.read(currentFolderProvider.notifier).state = item.id;
-         } else if (item is Note) {
-           controller.openFile(item);
-         }
-      },
-      onDelete: () => controller.deleteItem(item),
-      onArchive: (archive) => controller.archiveItem(item, archive),
-      onRestore: () => controller.restoreItem(item),
+    // Opacity 0 for the item being dragged (to create the "Hole")
+    bool isBeingDragged = _draggingId == itemKey;
+
+    return Opacity(
+      // data sends "opacity: 0" but we prefer handling it in GridItem via "childWhenDragging"
+      // But for staggered grid reorder, if we move the item index, the "hole" moves.
+      // So if Note A is at Index 0 and we drag it to Index 5...
+      // Index 0 becomes Note B. Note A is now at Index 5.
+      // The "Ghost" is floating. The "Real Item" at Index 5 is Note A (invisible).
+      opacity: 1.0, // DashboardGridItem handles the opacity during its own drag start
+      child: DashboardGridItem(
+        key: ValueKey(itemKey),
+        item: item,
+        allItems: items, // Pass local items so it knows neighbors
+        onDragStart: () {
+           setState(() {
+             _isDragging = true;
+             _draggingId = itemKey;
+           });
+        },
+        onDragEnd: (details) {
+           setState(() {
+             _isDragging = false;
+             _draggingId = null;
+           });
+           // Commit changes
+           widget.controller.handleReorder(_localItems);
+        },
+        onHoverReorder: (incomingKey, hoverIndexStr) {
+           // hoverIndexStr allows us to know WHERE we are hovering relative to this item?
+           // Actually, simpler: The Item *itself* knows its index in `items`.
+           // But `items` is passed in.
+           
+           // We need to find the indexes.
+           // incomingKey = "note_123"
+           // targetItem = item
+           
+           _handleLocalReorder(incomingKey, item);
+        },
+        onDrop: (incomingKey, zone) => widget.controller.handleDrop(incomingKey, item, zone, items),
+        onTap: () {
+           if (item is Folder) {
+             ref.read(currentFolderProvider.notifier).state = item.id;
+           } else if (item is Note) {
+             widget.controller.openFile(item);
+           }
+        },
+        onDelete: () => widget.controller.deleteItem(item),
+        onArchive: (archive) => widget.controller.archiveItem(item, archive),
+        onRestore: () => widget.controller.restoreItem(item),
+      ),
     );
+  }
+
+  void _handleLocalReorder(String incomingKey, dynamic targetItem) {
+     if (!_isDragging) return;
+     
+     // 1. Find indices
+     final int targetIndex = _localItems.indexOf(targetItem);
+     if (targetIndex == -1) return;
+     
+     int fromIndex = -1;
+     dynamic draggingObj;
+     
+     for (int i=0; i<_localItems.length; i++) {
+        final it = _localItems[i];
+        final key = (it is Folder) ? "folder_${it.id}" : "note_${it.id}";
+        if (key == incomingKey) {
+           fromIndex = i;
+           draggingObj = it;
+           break;
+        }
+     }
+     
+     if (fromIndex == -1 || draggingObj == null) return;
+     if (fromIndex == targetIndex) return;
+     
+     // 2. SWAP / REORDER
+     // Google Keep style: If I drag Note A (idx 0) to Note C (idx 2)...
+     // List becomes [Note B, Note C, Note A] ? 
+     // No, usually it's insert.
+     
+     setState(() {
+        _localItems.removeAt(fromIndex);
+        _localItems.insert(targetIndex, draggingObj);
+     });
+     // HapticFeedback.selectionClick(); // Optional, feels good
   }
 }

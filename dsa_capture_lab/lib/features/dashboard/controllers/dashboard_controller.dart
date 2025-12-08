@@ -60,22 +60,20 @@ class DashboardController {
       }
     } else {
       // REORDER
-      int oldIndex = allItems.indexOf(incomingObj);
-      int newIndex = allItems.indexOf(targetItem);
-      if (oldIndex == -1 || newIndex == -1) return;
+      // If we are using Local State Reordering (Keep Style), the "allItems" passed here 
+      // might already be the reordered list if we update it optimistically?
+      // Actually, if we use OnDragEnd to commit, we don't need to do anything here for reordering
+      // because the list is already reordered in the UI, we just need to save it.
       
-      if (zone == 'right') newIndex++;
-      if (newIndex > oldIndex) newIndex--;
-      if (newIndex < 0) newIndex = 0;
-      if (newIndex > allItems.length - 1) newIndex = allItems.length - 1;
-      
-      // Reorder in list
-      final removed = allItems.removeAt(oldIndex);
-      allItems.insert(newIndex, removed);
-      
-      // Batch update positions
-      await _repo.reorderItems(allItems);
+      // However, if DragTarget 'onAccept' is triggered, it means we dropped ON something.
+      // For Keep style, we drop "in the hole".
+      // We rely on 'onDragEnd' in DashboardContent to commit the final state of the list.
     }
+  }
+
+  Future<void> handleReorder(List<dynamic> items) async {
+    // Current list is already the desired order
+    await _repo.reorderItems(items);
   }
 
   Future<void> _mergeItemsIntoFolder(int incomingNoteId, Note targetNote) async {

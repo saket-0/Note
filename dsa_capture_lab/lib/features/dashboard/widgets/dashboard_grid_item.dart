@@ -14,6 +14,11 @@ class DashboardGridItem extends ConsumerStatefulWidget {
   final VoidCallback onDelete;
   final Function(bool) onArchive; 
   final VoidCallback onRestore;
+  
+  // New Callbacks for Keep-style Reorder
+  final VoidCallback? onDragStart;
+  final Function(DraggableDetails)? onDragEnd;
+  final Function(String incomingKey, String zone)? onHoverReorder;
 
   const DashboardGridItem({
     super.key,
@@ -24,6 +29,9 @@ class DashboardGridItem extends ConsumerStatefulWidget {
     required this.onDelete,
     required this.onArchive,
     required this.onRestore,
+    this.onDragStart,
+    this.onDragEnd,
+    this.onHoverReorder,
   });
 
   @override
@@ -31,7 +39,7 @@ class DashboardGridItem extends ConsumerStatefulWidget {
 }
 
 class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
-  String _hoverState = 'merge'; // merge, left, right
+  String _hoverState = 'merge'; // merge, left, right, reorder
 
   @override
   Widget build(BuildContext context) {
@@ -39,46 +47,44 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
     final bool isFolder = widget.item is Folder;
     final String dragKey = isFolder ? "folder_$itemId" : "note_$itemId";
 
-    // Decoupled Stack:
-    // Bottom: DragTarget (Handles Hover/Drop Logic & Border Feedback)
-    // Top: Draggable (Handles Drag Start & Content Display)
-    
-    // Decoupled Stack:
-    // Bottom: The Content (Determines Size)
-    // Overlay 1: DragTarget (Matches Content Size)
-    // Overlay 2: Draggable (Matches Content Size)
-    
     return Stack(
       children: [
-        // LAYER 0: The Content (Invisible Placeholder for Size)
-        // We need the size to be determined by the content, but the content itself is draggable.
-        // So we render the content here just to give the Stack a size? 
-        // No, simplest way is:
-        // Stack {
-        //   1. Draggable(child: Content) -> This is the main visible thing.
-        //   2. DragTarget (Positioned.fill) -> Overlay or Underlay.
-        // }
-        // BUT Draggable wrapper doesn't force size unless child does.
-        
-        // Let's swap the order or remove Positioned.fill from the "sizing" element.
-        
         // LongPressDraggable
         LongPressDraggable<String>(
           data: dragKey,
-           delay: const Duration(milliseconds: 300),
+          delay: const Duration(milliseconds: 300),
+          onDragStarted: widget.onDragStart,
+          onDragEnd: widget.onDragEnd,
           feedback: Material(
             color: Colors.transparent,
-            child: Opacity(
-              opacity: 0.8,
-              child: SizedBox(
-                width: 140, 
-                height: 140, 
-                child: _buildContent(isFeedback: true),
+            child: Transform.scale(
+              scale: 1.05, // Slight pop
+              child: Opacity(
+                opacity: 0.9,
+                child: SizedBox(
+                   // Constrain width to look like the card but floating
+                   // We ideally want exact size, but context.size might be better?
+                   // For now, fixed width/height constraint or using existing builder with loose constraints
+                  width: 160, 
+                  height: 160, 
+                  child: _buildContent(isFeedback: true),
+                ),
               ),
             ),
           ),
           childWhenDragging: Opacity(
-            opacity: 0.3,
+            // VISIBLE HOLE: We want the item to be "invisible" but take up space.
+            // Opacity 0 makes it invisible.
+            // DashboardContent handles the "shifting" logic.
+            // If we shift the list, a NEW item moves into this slot. 
+            // So we actually want the *dragged item* (wherever it is in the list) to be 0 opacity.
+            // But since local reordering changes the list, the item at this index CHANGES to something else.
+            // So relying on `childWhenDragging` is tricky if the widget REBUILDS as a different item.
+            // Use opacity: 0.0 only if we don't want "Ghost" behavior in the list.
+            // But we DO want the list to reflow.
+            // Actually, simply using 0.05 opacity provides a nice "placeholder" hint if needed, 
+            // but Keep uses fully invisible (reflows around it).
+            opacity: 0.0, 
             child: _buildContent(),
           ),
           child: GestureDetector(
@@ -87,55 +93,52 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
           ),
         ),
 
-        // LAYER 1: Drag Target (Overlay)
-        // This sits on top (or below if we want) but must match size of above.
-        // Since the above is NOT Positioned, the Stack takes its size.
-        // So we can use Positioned.fill for this one.
+        // Drag Target (Overlay)
         Positioned.fill(
           child: DragTarget<String>(
+            onWillAccept: (incoming) {
+               // Don't accept self
+               return incoming != dragKey;
+            },
             onMove: (details) {
               final RenderBox box = context.findRenderObject() as RenderBox;
               final localPos = box.globalToLocal(details.offset);
               final width = box.size.width;
+              final height = box.size.height;
               
-              String newState = 'merge';
-              if (localPos.dx < width * 0.20) {
-                newState = 'left';
-              } else if (localPos.dx > width * 0.80) {
-                newState = 'right';
-              } else {
-                newState = 'merge';
+              String newState = 'reorder'; // Default is reorder (center)
+
+              // Check for edges (if we still want explicit "side" drops or folder merging)
+              // Keep logic: Hovering center triggers reorder.
+              // Hovering "long enough" triggers merge? 
+              // For now, let's keep it simple: 
+              // Center > 50% = Reorder.
+              
+              // Define zones
+              // If we are strictly implementing "Reflow on Hover", we just need to detect "We are over this item".
+              
+              // Let's call callback immediately for "continuous reorder"
+              if (widget.onHoverReorder != null) {
+                  widget.onHoverReorder!(details.data as String, 'center');
               }
 
+              // Visual feedback state
+              // Maybe we still want to visualize "Merge" vs "Reorder"?
+              // If we want merge, we might need a timer or dwell detection. 
+              // For now, let's assume everything is Reorder unless explicitly implemented otherwise.
+              
               if (_hoverState != newState) {
                 setState(() => _hoverState = newState);
               }
             },
-            onLeave: (_) {},
+            onLeave: (_) {
+               setState(() => _hoverState = 'idle');
+            },
             onAccept: (incomingKey) => widget.onDrop(incomingKey, _hoverState),
             builder: (context, candidates, rejects) {
-              if (candidates.isEmpty) return const SizedBox.shrink();
-              return Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(20),
-                  border: _hoverState == 'merge' 
-                      ? Border.all(color: Colors.tealAccent, width: 4) 
-                      : null,
-                  color: _hoverState == 'merge' ? Colors.teal.withOpacity(0.2) : null,
-                ),
-                child: Stack(
-                  children: [
-                     if (_hoverState == 'left')
-                       Positioned(left: 0, top: 0, bottom: 0, width: 8, child: Container(
-                         decoration: BoxDecoration(color: Colors.orangeAccent, borderRadius: BorderRadius.circular(4))
-                       )),
-                     if (_hoverState == 'right')
-                       Positioned(right: 0, top: 0, bottom: 0, width: 8, child: Container(
-                         decoration: BoxDecoration(color: Colors.orangeAccent, borderRadius: BorderRadius.circular(4))
-                       )),
-                  ],
-                ),
-              );
+              // No visual overlay needed for reorder (the list reflow IS the feedback)
+              // Only show highlight if we support Merge/Grouping later.
+              return const SizedBox.shrink();
             },
           ),
         ),
