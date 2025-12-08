@@ -6,7 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/domain/entities/entities.dart';
 import '../../../shared/data/data_repository.dart';
 import '../../../shared/services/folder_service.dart';
-import '../gestures/body_zone/perfect_gesture.dart';
+import '../gestures/body_zone/smart_drag_gesture.dart';
 import '../gestures/glide_menu/glide_menu_overlay.dart' as glide;
 
 class DashboardGridItem extends ConsumerStatefulWidget {
@@ -244,36 +244,31 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
             builder: (context, candidates, rejects) {
                final bool showFolderHover = _hoverState == 'folder-hover';
                
-               // Build the gesture-aware content
-               Widget gestureContent = PerfectGestureDetector(
-                 isSelected: widget.isSelected,
-                 onTap: widget.onTap,
-                 onLongPress: widget.onLongPress,
-                 onDragStateChanged: widget.onDragStateChanged,
-                 child: AnimatedScale(
-                   scale: scale,
-                   duration: const Duration(milliseconds: 100),
-                   child: Container(
-                     decoration: showFolderHover ? BoxDecoration(
-                       border: Border.all(color: Colors.blueAccent, width: 4),
-                       borderRadius: BorderRadius.circular(15)
-                     ) : null,
-                     child: _buildContent(isSelected: widget.isSelected),
-                   ),
-                 ),
-               );
-               
-               // GRID LOCK: When selection mode is active, disable drag-to-reorder
-               // The first item being dragged won't rebuild until release, so it can still drag
-               // Other items will have isSelectionMode=true and won't get LongPressDraggable
+               // 1. SELECTION MODE: No Dragging allowed, only Tap/LongPress
                if (widget.isSelectionMode) {
-                 return gestureContent; // No LongPressDraggable = grid locked
+                 return TapLongPressDetector(
+                   onTap: widget.onTap,
+                   onLongPress: widget.onLongPress,
+                   child: AnimatedScale(
+                     scale: scale,
+                     duration: const Duration(milliseconds: 100),
+                     child: Container(
+                       decoration: showFolderHover ? BoxDecoration(
+                         border: Border.all(color: Colors.blueAccent, width: 4),
+                         borderRadius: BorderRadius.circular(15)
+                       ) : null,
+                       child: _buildContent(isSelected: widget.isSelected),
+                     ),
+                   ),
+                 );
                }
                
-               // Normal mode: Enable drag-to-reorder with LongPressDraggable
-               return LongPressDraggable<String>(
+               // 2. NORMAL MODE: Smart Drag (Tap < 200ms, Hold > 300ms, Move > 10px)
+               return SmartDraggable<String>(
                   data: dragKey,
-                  delay: const Duration(milliseconds: 350), // 350ms lock
+                  dragEnabled: true,
+                  onTap: widget.onTap,
+                  onLongPress: widget.onLongPress,
                   onDragStarted: widget.onDragStart,
                   onDragEnd: widget.onDragEnd,
                   feedback: Material(
@@ -295,7 +290,17 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
                     child: _buildContent(),
                   ),
                   onDragCompleted: () {},
-                  child: gestureContent,
+                  child: AnimatedScale(
+                     scale: scale,
+                     duration: const Duration(milliseconds: 100),
+                     child: Container(
+                       decoration: showFolderHover ? BoxDecoration(
+                         border: Border.all(color: Colors.blueAccent, width: 4),
+                         borderRadius: BorderRadius.circular(15)
+                       ) : null,
+                       child: _buildContent(isSelected: widget.isSelected),
+                     ),
+                   ),
                );
             },
           ),
