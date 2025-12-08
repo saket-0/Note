@@ -10,14 +10,56 @@ import '../../../shared/ui/page_routes.dart';
 import '../../camera/camera_screen.dart';
 import '../../editor/editor_screen.dart';
 import '../providers/dashboard_state.dart';
+import '../providers/selection_state.dart';
 
 class DashboardController {
   final WidgetRef ref;
   final BuildContext context;
 
+  // Selection State (In-Memory for now, or could use a Provider if we want it to persist across rebuilds better)
+  // For simplicity, we'll use a StateProvider in the file or just manage it via the ref?
+  // Since Controller is recreated on build, we should store state in a Provider.
+  // But wait, the previous code instantiates DashboardController in build().
+  // So member variables here will be lost.
+  // We need to use valid Providers for selection state.
+  
   DashboardController(this.context, this.ref);
 
   DataRepository get _repo => ref.read(dataRepositoryProvider);
+
+  // Helper getters for Selection
+  Set<String> get selectedItems => ref.read(selectedItemsProvider); // "note_1", "folder_2"
+  bool get isSelectionMode => ref.read(isSelectionModeProvider);
+
+  void toggleSelection(dynamic item) {
+    final key = (item is Folder) ? "folder_${item.id}" : "note_${item.id}";
+    final current = ref.read(selectedItemsProvider);
+    final newSet = Set<String>.from(current);
+    
+    if (newSet.contains(key)) {
+      newSet.remove(key);
+    } else {
+      newSet.add(key);
+    }
+    
+    ref.read(selectedItemsProvider.notifier).state = newSet;
+    ref.read(isSelectionModeProvider.notifier).state = newSet.isNotEmpty;
+  }
+
+  void clearSelection() {
+    ref.read(selectedItemsProvider.notifier).state = {};
+    ref.read(isSelectionModeProvider.notifier).state = false;
+  }
+  
+  void selectAll(List<dynamic> items) {
+     final newSet = <String>{};
+     for (var item in items) {
+        newSet.add((item is Folder) ? "folder_${item.id}" : "note_${item.id}");
+     }
+     ref.read(selectedItemsProvider.notifier).state = newSet;
+     ref.read(isSelectionModeProvider.notifier).state = true;
+  }
+
 
   Future<void> handleDrop(String incomingKey, dynamic targetItem, String zone, List<dynamic> allItems) async {
     final currentId = ref.read(currentFolderProvider);
@@ -186,61 +228,144 @@ class DashboardController {
   }
 
   Future<void> deleteItem(dynamic item) async {
-    final bool isFolder = item is Folder;
+    final selected = ref.read(selectedItemsProvider);
+    final String targetKey = (item is Folder) ? "folder_${item.id}" : "note_${item.id}";
+    final bool isMultiSelect = ref.read(isSelectionModeProvider) && selected.contains(targetKey);
+    
     final filter = ref.read(activeFilterProvider);
     final bool isTrash = filter == DashboardFilter.trash;
 
-    final String title = isTrash
-        ? (isFolder ? 'Permanently Delete Folder?' : 'Permanently Delete Note?')
-        : (isFolder ? 'Move to Trash?' : 'Move to Trash?');
-        
-    final String content = isTrash
-        ? 'This will permanently delete the item. This action cannot be undone.'
-        : 'Item will be moved to Trash.';
+    if (isMultiSelect) {
+       // MULTI-DELETE
+       final count = selected.length;
+       final String title = isTrash 
+          ? 'Permanently Delete $count items?' 
+          : 'Move $count items to Trash?';
+       final String content = isTrash
+          ? 'These actions cannot be undone.'
+          : 'Items will be moved to Trash.';
+          
+       final bool? confirm = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(title),
+          content: Text(content),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: Text(isTrash ? 'Delete Forever' : 'Trash'),
+            ),
+          ],
+        ),
+      );
+      
+      if (confirm == true) {
+        for (var key in selected) {
+          final parts = key.split('_');
+          final String type = parts[0]; // folder or note
+          final int id = int.parse(parts[1]);
+          
+          if (type == 'folder') {
+             await _repo.deleteFolder(id, permanent: isTrash);
+          } else {
+             await _repo.deleteNote(id, permanent: isTrash);
+          }
+        }
+        clearSelection();
+      }
 
-    final bool? confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(content),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: Text(isTrash ? 'Delete Forever' : 'Trash'),
-          ),
-        ],
-      ),
-    );
+    } else {
+      // SINGLE DELETE
+      final bool isFolder = item is Folder;
+      final String title = isTrash
+          ? (isFolder ? 'Permanently Delete Folder?' : 'Permanently Delete Note?')
+          : (isFolder ? 'Move to Trash?' : 'Move to Trash?');
+          
+      final String content = isTrash
+          ? 'This will permanently delete the item. This action cannot be undone.'
+          : 'Item will be moved to Trash.';
 
-    if (confirm == true) {
-      if (isFolder) {
-        await _repo.deleteFolder(item.id, permanent: isTrash);
-      } else {
-        await _repo.deleteNote(item.id, permanent: isTrash);
+      final bool? confirm = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(title),
+          content: Text(content),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: Text(isTrash ? 'Delete Forever' : 'Trash'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirm == true) {
+        if (isFolder) {
+          await _repo.deleteFolder(item.id, permanent: isTrash);
+        } else {
+          await _repo.deleteNote(item.id, permanent: isTrash);
+        }
       }
     }
   }
 
   Future<void> archiveItem(dynamic item, bool archive) async {
-    await _repo.archiveItem(item, archive);
-    
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(archive ? 'Archived' : 'Unarchived'),
-          action: SnackBarAction(
-            label: 'Undo',
-            onPressed: () async {
-              await _repo.archiveItem(item, !archive);
-            },
+    final selected = ref.read(selectedItemsProvider);
+    final String targetKey = (item is Folder) ? "folder_${item.id}" : "note_${item.id}";
+    final bool isMultiSelect = ref.read(isSelectionModeProvider) && selected.contains(targetKey);
+
+    if (isMultiSelect) {
+       int successCount = 0;
+       for (var key in selected) {
+          final parts = key.split('_');
+          final String type = parts[0];
+          final int id = int.parse(parts[1]);
+          
+          dynamic itemToArchive;
+          if (type == 'folder') {
+             itemToArchive = _repo.findFolder(id);
+          } else {
+             itemToArchive = _repo.findNote(id);
+          }
+          
+          if (itemToArchive != null) {
+             await _repo.archiveItem(itemToArchive, archive);
+             successCount++;
+          }
+       }
+       clearSelection();
+       
+       if (context.mounted && successCount > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(archive ? 'Archived $successCount items' : 'Unarchived $successCount items')),
+        );
+       }
+    } else {
+      await _repo.archiveItem(item, archive);
+      
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(archive ? 'Archived' : 'Unarchived'),
+            action: SnackBarAction(
+              label: 'Undo',
+              onPressed: () async {
+                await _repo.archiveItem(item, !archive);
+              },
+            ),
           ),
-        ),
-      );
+        );
+      }
     }
   }
 

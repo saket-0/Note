@@ -1,10 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/domain/entities/entities.dart';
 import '../controllers/dashboard_controller.dart';
-import 'joystick_menu.dart';
+import 'glide_menu_overlay.dart';
 
 class DashboardGridItem extends ConsumerStatefulWidget {
   final dynamic item;
@@ -15,6 +16,11 @@ class DashboardGridItem extends ConsumerStatefulWidget {
   final Function(bool) onArchive; 
   final VoidCallback onRestore;
   
+  // Selection Props
+  final bool isSelected;
+  final bool isSelectionMode;
+  final VoidCallback? onLongPress;
+
   // New Callbacks for Keep-style Reorder
   final VoidCallback? onDragStart;
   final Function(DraggableDetails)? onDragEnd;
@@ -29,6 +35,9 @@ class DashboardGridItem extends ConsumerStatefulWidget {
     required this.onDelete,
     required this.onArchive,
     required this.onRestore,
+    this.isSelected = false,
+    this.isSelectionMode = false,
+    this.onLongPress,
     this.onDragStart,
     this.onDragEnd,
     this.onHoverReorder,
@@ -39,7 +48,101 @@ class DashboardGridItem extends ConsumerStatefulWidget {
 }
 
 class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
-  String _hoverState = 'merge'; // merge, left, right, reorder
+  String _hoverState = 'idle'; // idle, merge
+  DateTime? _hoverStartTime;
+  
+  // Glide Menu State
+  final GlobalKey _iconKey = GlobalKey();
+  GlobalKey<GlideMenuOverlayState> _overlayKey = GlobalKey();
+  OverlayEntry? _menuOverlay;
+  Alignment _iconAlignment = Alignment.bottomRight; // Default
+  
+  @override
+  void initState() {
+    super.initState();
+    // Determine column after layout
+    WidgetsBinding.instance.addPostFrameCallback((_) => _determineAlignment());
+  }
+  
+  void _determineAlignment() {
+     if (!mounted) return;
+     final RenderBox? box = context.findRenderObject() as RenderBox?;
+     if (box == null) return;
+     
+     final Offset pos = box.localToGlobal(Offset.zero);
+     final Size screenSize = MediaQuery.of(context).size;
+     
+     // Simple X-Axis Check:
+     // If X < ScreenWidth / 2 -> Left Column -> Icon at Bottom Right
+     // If X > ScreenWidth / 2 -> Right Column -> Icon at Bottom Left
+     final bool isLeftColumn = pos.dx < (screenSize.width / 2);
+     
+     // If Left Column: Icon at BottomRight.
+     // If Right Column: Icon at BottomLeft.
+     setState(() {
+       _iconAlignment = isLeftColumn ? Alignment.bottomRight : Alignment.bottomLeft;
+     });
+  }
+
+  // --- GLIDE MENU LOGIC ---
+
+  void _showGlideMenu(PointerDownEvent event) {
+     HapticFeedback.mediumImpact();
+     
+     // 1. Get Anchor Position (Center of Icon)
+     final RenderBox iconBox = _iconKey.currentContext!.findRenderObject() as RenderBox;
+     final Offset iconCenter = iconBox.localToGlobal(iconBox.size.center(Offset.zero));
+     
+     // 2. Create Overlay
+     _overlayKey = GlobalKey<GlideMenuOverlayState>();
+     _menuOverlay = OverlayEntry(
+       builder: (context) => GlideMenuOverlay(
+         key: _overlayKey,
+         anchorPosition: iconCenter,
+         onClose: _closeGlideMenu,
+         onRename: () {
+            // TODO: Extract Rename Logic
+            // For now, reuse creation dialog or create a new dedicated one.
+            print("Action: Rename ${widget.item.id}");
+         },
+         onDelete: widget.onDelete,
+         onShare: () {
+            print("Action: Share ${widget.item.id}");
+            // Use Share Plus plugin here
+         },
+       )
+     );
+     
+     Overlay.of(context).insert(_menuOverlay!);
+  }
+
+  void _updateGlideMenu(PointerMoveEvent event) {
+     if (_menuOverlay == null) return;
+     // Track Y-Axis DRAG relative to start? 
+     // Actually GlideMenuOverlay calculates based on drag UP distance.
+     // We need to calculate how much we moved UP from the anchor.
+     
+     // Let's pass the raw Global Y coordinate to be safer, 
+     // OR calculate distance here.
+     final RenderBox iconBox = _iconKey.currentContext!.findRenderObject() as RenderBox;
+     final Offset iconCenter = iconBox.localToGlobal(iconBox.size.center(Offset.zero));
+     
+     // Drag Up -> currentY < startY. distance = startY - currentY.
+     final double distanceUp = iconCenter.dy - event.position.dy;
+     
+     _overlayKey.currentState?.updateDragY(distanceUp);
+  }
+
+  void _endGlideMenu(PointerUpEvent event) {
+     if (_menuOverlay == null) return;
+     _overlayKey.currentState?.executeAndClose();
+     // _menuOverlay pointer is cleared inside executeAndClose's callback (onClose)
+  }
+  
+  void _closeGlideMenu() {
+     _menuOverlay?.remove();
+     _menuOverlay = null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -47,106 +150,146 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
     final bool isFolder = widget.item is Folder;
     final String dragKey = isFolder ? "folder_$itemId" : "note_$itemId";
 
+    // Visual Scales
+    final double scale = widget.isSelected ? 0.95 : 1.0;
+    
+    // Z-Order (Stack):
     return Stack(
       children: [
-        // LongPressDraggable
-        LongPressDraggable<String>(
-          data: dragKey,
-          delay: const Duration(milliseconds: 300),
-          onDragStarted: widget.onDragStart,
-          onDragEnd: widget.onDragEnd,
-          feedback: Material(
-            color: Colors.transparent,
-            child: Transform.scale(
-              scale: 1.05, // Slight pop
-              child: Opacity(
-                opacity: 0.9,
-                child: SizedBox(
-                   // Constrain width to look like the card but floating
-                   // We ideally want exact size, but context.size might be better?
-                   // For now, fixed width/height constraint or using existing builder with loose constraints
-                  width: 160, 
-                  height: 160, 
-                  child: _buildContent(isFeedback: true),
-                ),
-              ),
-            ),
-          ),
-          childWhenDragging: Opacity(
-            // VISIBLE HOLE: We want the item to be "invisible" but take up space.
-            // Opacity 0 makes it invisible.
-            // DashboardContent handles the "shifting" logic.
-            // If we shift the list, a NEW item moves into this slot. 
-            // So we actually want the *dragged item* (wherever it is in the list) to be 0 opacity.
-            // But since local reordering changes the list, the item at this index CHANGES to something else.
-            // So relying on `childWhenDragging` is tricky if the widget REBUILDS as a different item.
-            // Use opacity: 0.0 only if we don't want "Ghost" behavior in the list.
-            // But we DO want the list to reflow.
-            // Actually, simply using 0.05 opacity provides a nice "placeholder" hint if needed, 
-            // but Keep uses fully invisible (reflows around it).
-            opacity: 0.0, 
-            child: _buildContent(),
-          ),
-          child: GestureDetector(
-            onTap: widget.onTap,
-            child: _buildContent(),
-          ),
-        ),
-
-        // Drag Target (Overlay)
-        Positioned.fill(
-          child: DragTarget<String>(
+        // LAYER 1: The Body (Zone B)
+        // Wraps Content + Drag Logic
+        DragTarget<String>(
             onWillAccept: (incoming) {
-               // Don't accept self
                return incoming != dragKey;
             },
             onMove: (details) {
-              final RenderBox box = context.findRenderObject() as RenderBox;
-              final localPos = box.globalToLocal(details.offset);
-              final width = box.size.width;
-              final height = box.size.height;
-              
-              String newState = 'reorder'; // Default is reorder (center)
-
-              // Check for edges (if we still want explicit "side" drops or folder merging)
-              // Keep logic: Hovering center triggers reorder.
-              // Hovering "long enough" triggers merge? 
-              // For now, let's keep it simple: 
-              // Center > 50% = Reorder.
-              
-              // Define zones
-              // If we are strictly implementing "Reflow on Hover", we just need to detect "We are over this item".
-              
-              // Let's call callback immediately for "continuous reorder"
-              if (widget.onHoverReorder != null) {
-                  widget.onHoverReorder!(details.data as String, 'center');
-              }
-
-              // Visual feedback state
-              // Maybe we still want to visualize "Merge" vs "Reorder"?
-              // If we want merge, we might need a timer or dwell detection. 
-              // For now, let's assume everything is Reorder unless explicitly implemented otherwise.
-              
-              if (_hoverState != newState) {
-                setState(() => _hoverState = newState);
-              }
+               final now = DateTime.now();
+               if (_hoverStartTime == null) _hoverStartTime = now;
+               
+               if (_hoverStartTime != null && now.difference(_hoverStartTime!).inMilliseconds > 500) {
+                 if (_hoverState != 'merge') {
+                   setState(() {
+                     _hoverState = 'merge';
+                     HapticFeedback.lightImpact();
+                   });
+                 }
+               } else {
+                  if (widget.onHoverReorder != null) {
+                    widget.onHoverReorder?.call(details.data as String, 'center');
+                  }
+               }
             },
             onLeave: (_) {
+               _hoverStartTime = null;
                setState(() => _hoverState = 'idle');
             },
             onAccept: (incomingKey) => widget.onDrop(incomingKey, _hoverState),
             builder: (context, candidates, rejects) {
-              // No visual overlay needed for reorder (the list reflow IS the feedback)
-              // Only show highlight if we support Merge/Grouping later.
-              return const SizedBox.shrink();
+               final bool showMergeRequest = _hoverState == 'merge';
+               
+               return LongPressDraggable<String>(
+                  data: dragKey,
+                  delay: const Duration(milliseconds: 300),
+                  onDragStarted: widget.onDragStart,
+                  onDragEnd: widget.onDragEnd,
+                  feedback: Material(
+                    color: Colors.transparent,
+                    child: Transform.scale(
+                      scale: 1.05,
+                      child: Opacity(
+                        opacity: 0.9,
+                        child: SizedBox(
+                          width: 160, 
+                          height: 160, 
+                          child: _buildContent(isFeedback: true),
+                        ),
+                      ),
+                    ),
+                  ),
+                  childWhenDragging: Opacity(
+                    opacity: 0.0, 
+                    child: _buildContent(),
+                  ),
+                  onDragCompleted: () {},
+                  child: AnimatedScale(
+                    scale: scale,
+                    duration: const Duration(milliseconds: 100),
+                    child: GestureDetector(
+                      onTap: () {
+                          // Zone B Handler
+                         if (widget.isSelectionMode) {
+                            // If user TAPS body in select mode, toggle select
+                            // But maybe we want the Menu to still work? 
+                            // Usually Selection Mode disables interacting with content.
+                            // Let's allow toggle.
+                            // But what if they tap Icon? Icon handler is ABOVE.
+                         }
+                         widget.onTap(); 
+                      },
+                      onLongPress: widget.onLongPress,
+                      child: Container(
+                        decoration: showMergeRequest ? BoxDecoration(
+                          border: Border.all(color: Colors.blueAccent, width: 4),
+                          borderRadius: BorderRadius.circular(15)
+                        ) : null,
+                        child: _buildContent(isSelected: widget.isSelected),
+                      ),
+                    ),
+                  ),
+               );
             },
           ),
+        
+        // LAYER 2: The Hamburger Icon (Zone A)
+        // High Priority Listener
+        if (!widget.isSelectionMode)
+        Positioned.fill(
+           child: Align(
+             alignment: _iconAlignment,
+             child: Listener(
+               behavior: HitTestBehavior.translucent, // Ensure it catches events
+               onPointerDown: _showGlideMenu,
+               onPointerMove: _updateGlideMenu,
+               onPointerUp: _endGlideMenu,
+               // Hitbox: 48x48 invisible container with Icon centered
+               child: Container(
+                 key: _iconKey,
+                 width: 48,
+                 height: 48,
+                 color: Colors.transparent, // Invisible Hitbox
+                 alignment: Alignment.center,
+                 child: Container(
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                       color: Colors.black.withOpacity(0.4),
+                       shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.menu, color: Colors.white, size: 16),
+                 ),
+               ),
+             ),
+           ),
         ),
+          
+          // Selection Checkmark Overlay
+          if (widget.isSelected)
+            Positioned(
+              top: 8,
+              left: 8,
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: const BoxDecoration(
+                  color: Colors.blue,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.check, color: Colors.white, size: 16),
+              ),
+            ),
       ],
     );
   }
 
-  Widget _buildContent({bool isFeedback = false}) {
+  Widget _buildContent({bool isFeedback = false, bool isSelected = false}) {
     final item = widget.item;
     
     // Determine Color
@@ -263,26 +406,17 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
        }
        // 4. TEXT / OTHER
        else {
-           IconData icon = Icons.insert_drive_file;
-           if (item.fileType == 'pdf') {
-             icon = Icons.picture_as_pdf;
-           } else if (item.fileType == 'text' || item.fileType == 'rich_text') {
-             icon = Icons.description;
-           }
-           
+           // ... (Same parsing logic as before)
+           // Simplified for replacement:
            String previewText = item.content.trim();
-            // Attempt to parse JSON if it looks like our rich text format, regardless of fileType tag (backward compatibility)
             if (item.fileType == 'rich_text' || (previewText.startsWith('{') && previewText.contains('"text":'))) {
               try {
                 final json = jsonDecode(previewText);
                 if (json is Map && json.containsKey('text')) {
                    previewText = json['text'] ?? "";
                 }
-              } catch (e) {
-                // Fallback if parsing fails
-              }
+              } catch (e) {}
             }
-           
            if (previewText.isEmpty) previewText = "No content";
 
            contentBody = Padding(
@@ -291,7 +425,6 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
                crossAxisAlignment: CrossAxisAlignment.start,
                mainAxisSize: MainAxisSize.min, 
                children: [
-                      // Title
                       Text(
                         item.title,
                         style: TextStyle(
@@ -303,12 +436,11 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 8),
-                      // Content snippet
                       Text(
                         previewText,
                         style: TextStyle(
-                           color: (item.color != 0) ? Colors.black54 : Colors.white70,
-                           fontSize: 14,
+                          color: (item.color != 0) ? Colors.black54 : Colors.white70,
+                          fontSize: 14,
                         ),
                         maxLines: isFeedback ? 2 : 6,
                         overflow: TextOverflow.ellipsis,
@@ -319,19 +451,31 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
        }
     }
     
+    // WRAPPER:
+    final container = Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(15),
+        border: (item is Note && item.color != 0) ? null : Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: contentBody,
+    );
+
+    if (isSelected) {
+       return Container(
+         decoration: BoxDecoration(
+           border: Border.all(color: Colors.blueAccent, width: 2), // Selected Border
+           borderRadius: BorderRadius.circular(15),
+         ),
+         child: container,
+       );
+    }
+    
     return Stack(
       children: [
-        Container(
-          width: double.infinity,
-          decoration: BoxDecoration(
-            color: bgColor,
-            borderRadius: BorderRadius.circular(15),
-            border: (item is Note && item.color != 0) ? null : Border.all(color: Colors.white.withOpacity(0.1)),
-          ),
-          child: contentBody,
-        ),
-        
-        // PIN INDICATOR
+        container,
+        // PIN INDICATOR (Inside content)
         if (item is Note && item.isPinned)
           Positioned(
             top: 8,
@@ -342,34 +486,6 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
               color: (item.color != 0) ? Colors.black54 : Colors.white70
             ),
           ),
-
-        // DELETE MENU
-        // JOYSTICK MENU
-        if (!isFeedback)
-        Positioned(
-            bottom: 12,
-            right: 12,
-            child: JoystickMenu(
-              isFolder: item is Folder,
-              onRename: () {
-                 // Open Rename Logic (Reuse creation dialog or new one)
-              },
-              onDelete: widget.onDelete,
-              onArchive: () {
-                final bool isArchived = (item is Folder) ? item.isArchived : (item as Note).isArchived;
-                widget.onArchive(!isArchived); // Toggle
-              },
-              onCopy: () {
-                // TODO: Implement Copy/Duplicate in Controller
-              },
-              onOpenAs: () {
-                // Open As logic
-                 if (item is Note && item.imagePath != null) {
-                    DashboardController(context, ref).openFile(item); 
-                 }
-              }, 
-            ),
-          )
       ],
     );
   }
@@ -475,4 +591,5 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
     }
     return widgets;
   }
-} // End Class replacement helper (not actual code)
+}
+

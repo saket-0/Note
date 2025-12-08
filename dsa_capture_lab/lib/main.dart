@@ -58,6 +58,35 @@ class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
         future: _initFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.done) {
+            if (snapshot.hasError) {
+              return Scaffold(
+                body: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.error_outline, color: Colors.red, size: 48),
+                        const SizedBox(height: 16),
+                        const Text("Initialization Failed", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        Text(snapshot.error.toString(), style: const TextStyle(color: Colors.white70), textAlign: TextAlign.center),
+                        const SizedBox(height: 24),
+                        FilledButton(
+                          onPressed: () { 
+                             setState(() {
+                                final repo = ref.read(dataRepositoryProvider);
+                                _initFuture = repo.initialize();
+                             });
+                          },
+                          child: const Text("Retry"),
+                        )
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
             return const DashboardScreen();
           }
           return const Scaffold(

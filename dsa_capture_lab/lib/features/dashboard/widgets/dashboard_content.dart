@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import '../../../shared/domain/entities/entities.dart';
 import '../controllers/dashboard_controller.dart';
 import '../providers/dashboard_state.dart';
+import '../providers/selection_state.dart';
 import 'dashboard_grid_item.dart';
 
 class DashboardContent extends ConsumerStatefulWidget {
@@ -56,7 +58,12 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
       _localItems = List.from(sourceItems);
     }
     
+    print("DEBUG: DashboardContent build. Filter=${widget.currentFilter}, Folder=$currentFolderId");
+    print("DEBUG: sourceItems count: ${sourceItems.length}");
+    print("DEBUG: _localItems count: ${_localItems.length}");
+    
     if (_localItems.isEmpty) {
+      print("DEBUG: _localItems is empty, showing Empty State");
       return _buildEmptyState();
     }
     
@@ -107,6 +114,16 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
     final String itemKey = (item is Folder) ? "folder_${item.id}" : "note_${item.id}";
     // Opacity 0 for the item being dragged (to create the "Hole")
     bool isBeingDragged = _draggingId == itemKey;
+    
+    // Selection State
+    final selectedItems = ref.watch(selectedItemsProvider); // We need to import this or expose getter
+    // Since we are inside DashboardContent (in widgets folder), we can import the provider directly 
+    // OR use the controller getter if we pass it down? 
+    // Ideally, keep UI reactive by watching the Provider directly.
+    // We already imported providers/dashboard_state.dart. We need providers/selection_state.dart.
+    
+    final bool isSelected = selectedItems.contains(itemKey);
+    final bool isSelectionMode = ref.watch(isSelectionModeProvider);
 
     return Opacity(
       // data sends "opacity: 0" but we prefer handling it in GridItem via "childWhenDragging"
@@ -119,7 +136,13 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
         key: ValueKey(itemKey),
         item: item,
         allItems: items, // Pass local items so it knows neighbors
+        isSelected: isSelected,
+        isSelectionMode: isSelectionMode,
         onDragStart: () {
+           if (isSelectionMode) {
+              // drag-to-reorder while selecting?
+              // keep it simple for now. 
+           }
            setState(() {
              _isDragging = true;
              _draggingId = itemKey;
@@ -146,10 +169,21 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
         },
         onDrop: (incomingKey, zone) => widget.controller.handleDrop(incomingKey, item, zone, items),
         onTap: () {
-           if (item is Folder) {
-             ref.read(currentFolderProvider.notifier).state = item.id;
-           } else if (item is Note) {
-             widget.controller.openFile(item);
+           if (isSelectionMode) {
+              widget.controller.toggleSelection(item);
+           } else {
+             if (item is Folder) {
+               ref.read(currentFolderProvider.notifier).state = item.id;
+             } else if (item is Note) {
+               widget.controller.openFile(item);
+             }
+           }
+        },
+        onLongPress: () {
+           // Trigger Selection Mode
+           if (!isSelectionMode) {
+              widget.controller.toggleSelection(item);
+              HapticFeedback.selectionClick();
            }
         },
         onDelete: () => widget.controller.deleteItem(item),

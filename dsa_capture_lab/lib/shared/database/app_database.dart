@@ -11,7 +11,7 @@ export '../domain/entities/entities.dart';
 /// - Transaction support for atomic operations
 class AppDatabase {
   static Database? _database;
-  static const String _dbName = 'dsa_notes_v4.db'; // New DB version for clean slate
+  static const String _dbName = 'dsa_notes_v5.db'; // New DB version for clean slate
 
   Future<Database> get database async {
     if (_database != null) return _database!;
