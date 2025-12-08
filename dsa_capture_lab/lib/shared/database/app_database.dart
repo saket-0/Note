@@ -346,6 +346,66 @@ class AppDatabase {
   }
 
   // ===========================================
+  // BATCH OPERATIONS (Archive/Delete/Move Multiple Items)
+  // ===========================================
+
+  /// Archive multiple items in a single transaction.
+  /// Reusable for any bulk archive operation (selection, automation, etc.)
+  Future<void> archiveItemsBatch(List<({int id, String type})> items, bool archive) async {
+    if (items.isEmpty) return;
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final item in items) {
+        if (item.id <= 0) continue; // Skip temp IDs
+        final table = item.type == 'folder' ? 'folders' : 'notes';
+        await txn.update(table, {'is_archived': archive ? 1 : 0}, where: 'id = ?', whereArgs: [item.id]);
+      }
+    });
+  }
+
+  /// Delete multiple items in a single transaction.
+  /// Reusable for any bulk delete operation (selection, cleanup, etc.)
+  Future<void> deleteItemsBatch(List<({int id, String type})> items, {required bool permanent}) async {
+    if (items.isEmpty) return;
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final item in items) {
+        if (item.id <= 0) continue; // Skip temp IDs
+        final table = item.type == 'folder' ? 'folders' : 'notes';
+        if (permanent) {
+          await txn.delete(table, where: 'id = ?', whereArgs: [item.id]);
+        } else {
+          await txn.update(table, {'is_deleted': 1}, where: 'id = ?', whereArgs: [item.id]);
+        }
+      }
+    });
+  }
+
+  /// Move multiple items to a target folder in a single transaction.
+  /// Each item gets a unique position (stacked from top).
+  /// Reusable for grouping, bulk reorganization, etc.
+  Future<void> moveItemsBatch(List<({int id, String type, int position})> items, int? targetFolderId) async {
+    if (items.isEmpty) return;
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final item in items) {
+        if (item.id <= 0) continue; // Skip temp IDs
+        if (item.type == 'folder') {
+          await txn.update('folders', {
+            'parent_id': targetFolderId,
+            'position': item.position,
+          }, where: 'id = ?', whereArgs: [item.id]);
+        } else {
+          await txn.update('notes', {
+            'folder_id': targetFolderId,
+            'position': item.position,
+          }, where: 'id = ?', whereArgs: [item.id]);
+        }
+      }
+    });
+  }
+
+  // ===========================================
   // HELPERS
   // ===========================================
 

@@ -450,6 +450,134 @@ class DataRepository {
   }
 
   // ===========================================
+  // BATCH OPERATIONS (Single UI Rebuild)
+  // ===========================================
+
+  /// Archive multiple items atomically.
+  /// 
+  /// Cache-first: Updates all items in cache, triggers ONE UI rebuild,
+  /// then persists to DB in a single transaction.
+  /// 
+  /// Reusable for: selection bar archive, bulk archive, automation, etc.
+  Future<void> archiveItems(List<dynamic> items, bool archive) async {
+    if (items.isEmpty) return;
+    
+    final dbUpdates = <({int id, String type})>[];
+    
+    // Step 1: Update cache for ALL items
+    for (final item in items) {
+      if (item is Folder) {
+        _removeFolderFromCache(item.id);
+        if (archive) {
+          _archivedItems.add(item.copyWith(isArchived: true, isDeleted: false));
+        } else {
+          _addFolderToCache(item.copyWith(isArchived: false, isDeleted: false));
+        }
+        if (item.id > 0) dbUpdates.add((id: item.id, type: 'folder'));
+      } else if (item is Note) {
+        _removeNoteFromCache(item.id);
+        if (archive) {
+          _archivedItems.add(item.copyWith(isArchived: true, isDeleted: false));
+        } else {
+          _addNoteToCache(item.copyWith(isArchived: false, isDeleted: false));
+        }
+        if (item.id > 0) dbUpdates.add((id: item.id, type: 'note'));
+      }
+    }
+    
+    // Step 2: Single UI notification
+    _notifyChange();
+    
+    // Step 3: Batch DB persist
+    if (dbUpdates.isNotEmpty) {
+      await _db.archiveItemsBatch(dbUpdates, archive);
+    }
+  }
+
+  /// Delete multiple items atomically.
+  /// 
+  /// Cache-first: Updates all items in cache, triggers ONE UI rebuild,
+  /// then persists to DB in a single transaction.
+  /// 
+  /// Reusable for: selection bar delete, bulk cleanup, etc.
+  Future<void> deleteItems(List<dynamic> items, {required bool permanent}) async {
+    if (items.isEmpty) return;
+    
+    final dbUpdates = <({int id, String type})>[];
+    
+    // Step 1: Update cache for ALL items
+    for (final item in items) {
+      if (item is Folder) {
+        if (permanent) {
+          _removeFolderFromCache(item.id);
+        } else {
+          _removeFolderFromCache(item.id);
+          _trashedItems.add(item.copyWith(isDeleted: true));
+        }
+        if (item.id > 0) dbUpdates.add((id: item.id, type: 'folder'));
+      } else if (item is Note) {
+        if (permanent) {
+          _removeNoteFromCache(item.id);
+        } else {
+          _removeNoteFromCache(item.id);
+          _trashedItems.add(item.copyWith(isDeleted: true));
+        }
+        if (item.id > 0) dbUpdates.add((id: item.id, type: 'note'));
+      }
+    }
+    
+    // Step 2: Single UI notification
+    _notifyChange();
+    
+    // Step 3: Batch DB persist
+    if (dbUpdates.isNotEmpty) {
+      await _db.deleteItemsBatch(dbUpdates, permanent: permanent);
+    }
+  }
+
+  /// Move multiple items to a target folder atomically.
+  /// 
+  /// Cache-first: Calculates stacked positions, updates all items in cache,
+  /// triggers ONE UI rebuild, then persists to DB in a single transaction.
+  /// 
+  /// Reusable for: grouping into folder, bulk reorganization, etc.
+  Future<void> moveItems(List<dynamic> items, int? targetFolderId) async {
+    if (items.isEmpty) return;
+    
+    final dbUpdates = <({int id, String type, int position})>[];
+    
+    // Calculate positions: first item gets highest position (top), then stacked below
+    final existingItems = getActiveContent(targetFolderId);
+    int basePosition = LayoutService.getMoveToTopPosition(existingItems);
+    const positionSpacing = 1000; // Space between stacked items
+    
+    // Step 1: Update cache for ALL items with stacked positions
+    for (int i = 0; i < items.length; i++) {
+      final item = items[i];
+      // First item at top (highest position), subsequent items below
+      final newPos = basePosition + ((items.length - 1 - i) * positionSpacing);
+      
+      if (item is Folder) {
+        _removeFolderFromCache(item.id);
+        _addFolderToCache(item.copyWith(parentId: targetFolderId, position: newPos));
+        if (item.id > 0) dbUpdates.add((id: item.id, type: 'folder', position: newPos));
+      } else if (item is Note) {
+        _removeNoteFromCache(item.id);
+        _addNoteToCache(item.copyWith(folderId: targetFolderId, position: newPos));
+        if (item.id > 0) dbUpdates.add((id: item.id, type: 'note', position: newPos));
+      }
+    }
+    
+    // Step 2: Single UI notification
+    _notifyChange();
+    
+    // Step 3: Batch DB persist
+    if (dbUpdates.isNotEmpty) {
+      await _db.moveItemsBatch(dbUpdates, targetFolderId);
+    }
+  }
+
+  // ===========================================
   // CACHE HELPERS
   // ===========================================
 

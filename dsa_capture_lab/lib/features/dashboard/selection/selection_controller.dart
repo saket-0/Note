@@ -102,38 +102,39 @@ class SelectionController {
     clearSelection();
   }
   
-  /// Archive all selected items
+  /// Archive all selected items (batch operation - instant UI update)
   Future<void> archiveSelectedItems(bool archive) async {
-    for (final key in selectedItems) {
-      final parsed = _parseKey(key);
-      if (parsed == null) continue;
-      
-      dynamic item;
-      if (parsed.type == 'folder') {
-        item = _repo.findFolder(parsed.id);
-      } else {
-        item = _repo.findNote(parsed.id);
-      }
-      
-      if (item != null) {
-        await _repo.archiveItem(item, archive);
-      }
+    final items = getSelectedItems();
+    if (items.isEmpty) return;
+    
+    // Collect keys BEFORE archiving (for immediate UI removal)
+    final keysToRemove = selectedItems.toSet();
+    
+    // Single batch call: updates cache, triggers ONE UI rebuild, then DB persist
+    await _repo.archiveItems(items, archive);
+    
+    // Signal immediate removal from grid (only when archiving, not unarchiving)
+    if (archive) {
+      _ref.read(pendingRemovalKeysProvider.notifier).state = keysToRemove;
     }
+    
     clearSelection();
   }
   
-  /// Delete all selected items (move to trash or permanent delete)
+  /// Delete all selected items (batch operation - instant UI update)
   Future<void> deleteSelectedItems({required bool permanent}) async {
-    for (final key in selectedItems) {
-      final parsed = _parseKey(key);
-      if (parsed == null) continue;
-      
-      if (parsed.type == 'folder') {
-        await _repo.deleteFolder(parsed.id, permanent: permanent);
-      } else {
-        await _repo.deleteNote(parsed.id, permanent: permanent);
-      }
-    }
+    final items = getSelectedItems();
+    if (items.isEmpty) return;
+    
+    // Collect keys BEFORE deleting (for immediate UI removal)
+    final keysToRemove = selectedItems.toSet();
+    
+    // Single batch call: updates cache, triggers ONE UI rebuild, then DB persist
+    await _repo.deleteItems(items, permanent: permanent);
+    
+    // Signal immediate removal from grid
+    _ref.read(pendingRemovalKeysProvider.notifier).state = keysToRemove;
+    
     clearSelection();
   }
   

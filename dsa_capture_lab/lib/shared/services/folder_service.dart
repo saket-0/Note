@@ -125,10 +125,9 @@ class FolderService {
   
   /// Create a new folder and move all selected items into it.
   /// 
-  /// This is an atomic operation:
+  /// Batch operation for instant UI update:
   /// - Creates folder first
-  /// - Then moves all items
-  /// - If any move fails, the folder still exists (partial success)
+  /// - Then moves all items in single batch call (one UI rebuild)
   /// 
   /// Returns: folder ID on success, null on failure
   /// On failure: caller should NOT clear selection (allow retry)
@@ -151,26 +150,11 @@ class FolderService {
       
       debugPrint('[FolderService] Created folder $folderId: "$folderName"');
       
-      // Step 2: Move all items into the new folder
-      int successCount = 0;
-      int failCount = 0;
+      // Step 2: Move all items in single batch (instant UI update)
+      await _repo.moveItems(items, folderId);
       
-      for (final item in items) {
-        final success = await moveItemToFolder(
-          item: item,
-          targetFolderId: folderId,
-        );
-        if (success) {
-          successCount++;
-        } else {
-          failCount++;
-        }
-      }
+      debugPrint('[FolderService] Moved ${items.length} items to folder $folderId');
       
-      debugPrint('[FolderService] Moved $successCount/${items.length} items (failed: $failCount)');
-      
-      // Return folder ID even if some moves failed
-      // UI can show partial success message
       return folderId;
     } catch (e, stack) {
       debugPrint('[FolderService] Error creating folder from selection: $e');
