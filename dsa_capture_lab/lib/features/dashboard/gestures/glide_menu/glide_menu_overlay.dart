@@ -177,12 +177,16 @@ class GlideMenuOverlayState extends State<GlideMenuOverlay>
             size: 20,
           ),
           const SizedBox(width: 10),
-          Text(
-            item.label,
-            style: TextStyle(
-              color: isHighlighted ? Colors.white : Colors.white70,
-              fontSize: 14,
-              fontWeight: isHighlighted ? FontWeight.w600 : FontWeight.w500,
+          Expanded(
+            child: Text(
+              item.label,
+              style: TextStyle(
+                color: isHighlighted ? Colors.white : Colors.white70,
+                fontSize: 14,
+                fontWeight: isHighlighted ? FontWeight.w600 : FontWeight.w500,
+                decoration: TextDecoration.none,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
@@ -193,11 +197,12 @@ class GlideMenuOverlayState extends State<GlideMenuOverlay>
 
 /// Default menu items factory
 class GlideMenuItems {
-  /// Menu for text notes: [Delete, Share, Color, Pin]
+  /// Menu for text notes: [Delete, Archive, Share, Color, Pin]
   static List<GlideMenuItem> forTextNote({
     required VoidCallback onPin,
     required VoidCallback onColor,
     required VoidCallback onShare,
+    required VoidCallback onArchive,
     required VoidCallback onDelete,
   }) {
     return [
@@ -206,6 +211,12 @@ class GlideMenuItems {
         icon: Icons.delete_outline,
         color: Colors.red.shade400,
         onExecute: onDelete,
+      ),
+      GlideMenuItem(
+        label: 'Archive',
+        icon: Icons.archive_outlined,
+        color: Colors.grey.shade600,
+        onExecute: onArchive,
       ),
       GlideMenuItem(
         label: 'Share',
@@ -228,11 +239,12 @@ class GlideMenuItems {
     ];
   }
   
-  /// Menu for image notes: [Delete, Share, Rename, Pin]
+  /// Menu for image notes: [Delete, Archive, Share, Rename, Pin]
   static List<GlideMenuItem> forImageNote({
     required VoidCallback onPin,
     required VoidCallback onRename,
     required VoidCallback onShare,
+    required VoidCallback onArchive,
     required VoidCallback onDelete,
   }) {
     return [
@@ -241,6 +253,12 @@ class GlideMenuItems {
         icon: Icons.delete_outline,
         color: Colors.red.shade400,
         onExecute: onDelete,
+      ),
+      GlideMenuItem(
+        label: 'Archive',
+        icon: Icons.archive_outlined,
+        color: Colors.grey.shade600,
+        onExecute: onArchive,
       ),
       GlideMenuItem(
         label: 'Share',
@@ -263,11 +281,12 @@ class GlideMenuItems {
     ];
   }
   
-  /// Menu for folders: [Delete, Share, Rename, Pin]
+  /// Menu for folders: [Delete, Archive, Share, Rename, Pin]
   static List<GlideMenuItem> forFolder({
     required VoidCallback onPin,
     required VoidCallback onRename,
     required VoidCallback onShare,
+    required VoidCallback onArchive,
     required VoidCallback onDelete,
   }) {
     return [
@@ -276,6 +295,12 @@ class GlideMenuItems {
         icon: Icons.delete_outline,
         color: Colors.red.shade400,
         onExecute: onDelete,
+      ),
+      GlideMenuItem(
+        label: 'Archive',
+        icon: Icons.archive_outlined,
+        color: Colors.grey.shade600,
+        onExecute: onArchive,
       ),
       GlideMenuItem(
         label: 'Share',
@@ -305,7 +330,7 @@ class GlideMenuItems {
   }) {
     return [
       GlideMenuItem(
-        label: 'Delete Forever',
+        label: 'Forever',
         icon: Icons.delete_forever,
         color: Colors.redAccent,
         onExecute: onDeleteForever,
@@ -339,12 +364,12 @@ class GlideMenuItems {
       ),
     ];
   }
-  
   /// Legacy alias for forTextNote
   static List<GlideMenuItem> forNote({
     required VoidCallback onPin,
     required VoidCallback onColor,
     required VoidCallback onShare,
+    required VoidCallback onArchive,
     required VoidCallback onDelete,
-  }) => forTextNote(onPin: onPin, onColor: onColor, onShare: onShare, onDelete: onDelete);
+  }) => forTextNote(onPin: onPin, onColor: onColor, onShare: onShare, onArchive: onArchive, onDelete: onDelete);
 }

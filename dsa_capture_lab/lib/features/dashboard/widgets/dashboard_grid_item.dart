@@ -122,6 +122,7 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
          onPin: () => _handlePin(),
          onRename: () => _handleRename(),
          onShare: () => _handleShare(),
+         onArchive: () => widget.onArchive(true),
          onDelete: widget.onDelete,
        );
      } else if (item is Note && item.fileType == 'image') {
@@ -130,6 +131,7 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
          onPin: () => _handlePin(),
          onRename: () => _handleRename(),
          onShare: () => _handleShare(),
+         onArchive: () => widget.onArchive(true),
          onDelete: widget.onDelete,
        );
      } else {
@@ -138,6 +140,7 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
          onPin: () => _handlePin(),
          onColor: () => _showColorPicker(),
          onShare: () => _handleShare(),
+         onArchive: () => widget.onArchive(true),
          onDelete: widget.onDelete,
        );
      }
@@ -211,9 +214,15 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
     } else if (item is Folder) {
       // Folders not supported yet
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Sharing folders not supported yet')),
-        );
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('Sharing folders not supported yet'),
+              duration: Duration(seconds: 2),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
       }
     }
   }
@@ -343,12 +352,15 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
                    targetFolderId: widget.item.id,
                  );
                   if (!success && mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Failed to move item to folder'),
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
+                    ScaffoldMessenger.of(context)
+                      ..hideCurrentSnackBar()
+                      ..showSnackBar(
+                        const SnackBar(
+                          content: Text('Failed to move item to folder'),
+                          duration: Duration(seconds: 2),
+                          behavior: SnackBarBehavior.floating,
+                        ),
+                      );
                   } else if (success) {
                     // Notify parent to remove item from local list immediately
                     widget.onMoveComplete?.call(incomingKey);

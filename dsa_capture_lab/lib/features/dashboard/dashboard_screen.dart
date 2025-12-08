@@ -79,12 +79,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             SystemNavigator.pop();
           } else {
             _lastBackPress = now;
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Press back again to exit'),
-                duration: Duration(seconds: 2),
-              ),
-            );
+            ScaffoldMessenger.of(context)
+              ..hideCurrentSnackBar()
+              ..showSnackBar(
+                const SnackBar(
+                  content: Text('Press back again to exit'),
+                  duration: Duration(seconds: 2),
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
           }
         },
         child: Scaffold(

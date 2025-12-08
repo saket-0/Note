@@ -27,6 +27,21 @@ class DashboardController {
 
   DataRepository get _repo => ref.read(dataRepositoryProvider);
 
+  /// Helper to show toast messages with proper duration
+  void _showToast(String message, {SnackBarAction? action}) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          action: action,
+        ),
+      );
+  }
+
   // Helper getters for Selection
   Set<String> get selectedItems => ref.read(selectedItemsProvider); // "note_1", "folder_2"
   bool get isSelectionMode => ref.read(isSelectionModeProvider);
@@ -125,9 +140,7 @@ class DashboardController {
     await _repo.moveNote(targetNote.id, newFolderId);
     
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Group created!')),
-      );
+      _showToast('Group created!');
     }
   }
 
@@ -150,9 +163,7 @@ class DashboardController {
     } else if (note.imagePath != null) {
       final result = await OpenFilex.open(note.imagePath!);
       if (result.type != ResultType.done && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not open file: ${result.message}')),
-        );
+        _showToast('Could not open file: ${result.message}');
       }
     }
   }
@@ -342,23 +353,19 @@ class DashboardController {
        clearSelection();
        
        if (context.mounted && successCount > 0) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(archive ? 'Archived $successCount items' : 'Unarchived $successCount items')),
-        );
+        _showToast(archive ? 'Archived $successCount items' : 'Unarchived $successCount items');
        }
     } else {
       await _repo.archiveItem(item, archive);
       
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(archive ? 'Archived' : 'Unarchived'),
-            action: SnackBarAction(
-              label: 'Undo',
-              onPressed: () async {
-                await _repo.archiveItem(item, !archive);
-              },
-            ),
+        _showToast(
+          archive ? 'Archived' : 'Unarchived',
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () async {
+              await _repo.archiveItem(item, !archive);
+            },
           ),
         );
       }
@@ -369,9 +376,7 @@ class DashboardController {
     await _repo.restoreItem(item);
     
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Restored')),
-      );
+      _showToast('Restored');
     }
   }
 
@@ -398,9 +403,7 @@ class DashboardController {
     ref.read(pendingRemovalKeysProvider.notifier).state = {incomingKey};
     
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Moved to parent folder')),
-      );
+      _showToast('Moved to parent folder');
     }
   }
 }
