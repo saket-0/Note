@@ -76,22 +76,11 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
   }
   
   void _determineAlignment() {
+     // Always position the hamburger icon at bottom-right
+     // (Previously this was dynamic based on column position)
      if (!mounted) return;
-     final RenderBox? box = context.findRenderObject() as RenderBox?;
-     if (box == null) return;
-     
-     final Offset pos = box.localToGlobal(Offset.zero);
-     final Size screenSize = MediaQuery.of(context).size;
-     
-     // Simple X-Axis Check:
-     // If X < ScreenWidth / 2 -> Left Column -> Icon at Bottom Right
-     // If X > ScreenWidth / 2 -> Right Column -> Icon at Bottom Left
-     final bool isLeftColumn = pos.dx < (screenSize.width / 2);
-     
-     // If Left Column: Icon at BottomRight.
-     // If Right Column: Icon at BottomLeft.
      setState(() {
-       _iconAlignment = isLeftColumn ? Alignment.bottomRight : Alignment.bottomLeft;
+       _iconAlignment = Alignment.bottomRight;
      });
   }
 
