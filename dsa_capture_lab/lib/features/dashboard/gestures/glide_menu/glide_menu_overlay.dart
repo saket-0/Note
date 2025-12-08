@@ -46,9 +46,14 @@ class GlideMenuOverlayState extends State<GlideMenuOverlay>
   late Animation<double> _scaleAnimation;
   int? _highlightedIndex;
   
+  // Smart positioning state
+  bool _isDownwardMode = false;
+  double _screenHeight = 0;
+  
   static const double _itemHeight = 48.0;
   static const double _menuWidth = 140.0;
-  static const double _bottomPadding = 24.0;
+  static const double _padding = 24.0;
+  static const double _minSpaceRequired = 8.0; // Minimum margin from screen edge
   
   @override
   void initState() {
@@ -65,27 +70,62 @@ class GlideMenuOverlayState extends State<GlideMenuOverlay>
   }
   
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _calculateDirection();
+  }
+  
+  void _calculateDirection() {
+    // Get screen dimensions safely
+    _screenHeight = MediaQuery.of(context).size.height;
+    final safeAreaTop = MediaQuery.of(context).padding.top;
+    
+    final totalMenuHeight = _itemHeight * widget.items.length;
+    final spaceAbove = widget.anchorPosition.dy - _padding - safeAreaTop;
+    
+    // Determine if we need downward mode
+    _isDownwardMode = spaceAbove < totalMenuHeight + _minSpaceRequired;
+  }
+  
+  @override
   void dispose() {
     _controller.dispose();
     super.dispose();
   }
   
   /// Update highlight based on drag distance (called by parent)
+  /// dragAmountUpwards is positive when dragging up, negative when dragging down
   void updateDragY(double dragAmountUpwards) {
     if (!mounted) return;
     
     int index = -1;
     final items = widget.items;
     
-    // Calculate which item is under the finger
-    // Items are ordered bottom-to-top visually, but stored top-to-bottom in list
-    // So item[0] is at top, item[last] is at bottom (closest to finger)
-    // dragAmountUpwards increases as finger moves up
-    
-    final reversedIndex = (dragAmountUpwards / _itemHeight).floor();
-    if (reversedIndex >= 0 && reversedIndex < items.length) {
-      // Reverse the index since items are rendered top-to-bottom
-      index = items.length - 1 - reversedIndex;
+    if (_isDownwardMode) {
+      // DOWNWARD MODE: Menu is below anchor, user drags DOWN to select
+      // dragAmountUpwards will be NEGATIVE when dragging down
+      // Convert to positive "distance traveled towards menu"
+      final dragDistance = -dragAmountUpwards; // Negate to get positive value for downward drag
+      
+      if (dragDistance > 0) {
+        // Map distance to index - first item (index 0) is closest to anchor
+        final directIndex = (dragDistance / _itemHeight).floor();
+        if (directIndex >= 0 && directIndex < items.length) {
+          index = directIndex;
+        }
+      }
+    } else {
+      // UPWARD MODE (Default): Menu is above anchor, user drags UP to select
+      // Items are ordered top-to-bottom in list, but visually bottom-to-top
+      // So item[last] is at bottom (closest to finger)
+      
+      if (dragAmountUpwards > 0) {
+        final reversedIndex = (dragAmountUpwards / _itemHeight).floor();
+        if (reversedIndex >= 0 && reversedIndex < items.length) {
+          // Reverse the index since items are rendered top-to-bottom
+          index = items.length - 1 - reversedIndex;
+        }
+      }
     }
     
     if (index != _highlightedIndex) {
@@ -101,7 +141,11 @@ class GlideMenuOverlayState extends State<GlideMenuOverlay>
     if (_highlightedIndex != null && 
         _highlightedIndex! >= 0 && 
         _highlightedIndex! < widget.items.length) {
-      widget.items[_highlightedIndex!].onExecute();
+      // In downward mode, items are reversed, so we need to map back to original index
+      final actualIndex = _isDownwardMode 
+          ? widget.items.length - 1 - _highlightedIndex! 
+          : _highlightedIndex!;
+      widget.items[actualIndex].onExecute();
     }
     _close();
   }
@@ -115,17 +159,43 @@ class GlideMenuOverlayState extends State<GlideMenuOverlay>
     final items = widget.items;
     final totalHeight = _itemHeight * items.length;
     
-    // Position menu ABOVE anchor
-    final topPos = widget.anchorPosition.dy - totalHeight - _bottomPadding;
+    // Calculate horizontal position (centered, clamped to screen)
+    final screenWidth = MediaQuery.of(context).size.width;
     final leftPos = (widget.anchorPosition.dx - (_menuWidth / 2))
-        .clamp(8.0, MediaQuery.of(context).size.width - _menuWidth - 8);
+        .clamp(_minSpaceRequired, screenWidth - _menuWidth - _minSpaceRequired);
+    
+    // Calculate vertical position based on direction mode
+    double topPos;
+    Alignment scaleAlignment;
+    
+    if (_isDownwardMode) {
+      // Render BELOW anchor
+      topPos = widget.anchorPosition.dy + _padding;
+      scaleAlignment = Alignment.topCenter; // Scale from top (where anchor is)
+    } else {
+      // Render ABOVE anchor (default)
+      topPos = widget.anchorPosition.dy - totalHeight - _padding;
+      scaleAlignment = Alignment.bottomCenter; // Scale from bottom (where anchor is)
+    }
+    
+    // Clamp to screen bounds
+    final safeAreaTop = MediaQuery.of(context).padding.top;
+    final safeAreaBottom = MediaQuery.of(context).padding.bottom;
+    topPos = topPos.clamp(
+      safeAreaTop + _minSpaceRequired, 
+      _screenHeight - totalHeight - safeAreaBottom - _minSpaceRequired,
+    );
+    
+    // Build items - in downward mode, REVERSE order so "Pin" (last item) is closest to anchor
+    // In upward mode, items render top-to-bottom but "Pin" is at bottom (closest to finger)
+    final orderedItems = _isDownwardMode ? items.reversed.toList() : items;
     
     return Positioned(
-      top: topPos.clamp(8.0, double.infinity),
+      top: topPos,
       left: leftPos,
       child: ScaleTransition(
         scale: _scaleAnimation,
-        alignment: Alignment.bottomCenter,
+        alignment: scaleAlignment,
         child: Container(
           width: _menuWidth,
           decoration: BoxDecoration(
@@ -143,10 +213,10 @@ class GlideMenuOverlayState extends State<GlideMenuOverlay>
             borderRadius: BorderRadius.circular(14),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              children: List.generate(items.length, (i) {
+              children: List.generate(orderedItems.length, (i) {
                 final isFirst = i == 0;
-                final isLast = i == items.length - 1;
-                return _buildItem(items[i], i, isFirst, isLast);
+                final isLast = i == orderedItems.length - 1;
+                return _buildItem(orderedItems[i], i, isFirst, isLast);
               }),
             ),
           ),
