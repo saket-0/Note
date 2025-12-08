@@ -119,6 +119,7 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
      } else if (item is Folder) {
        // Active: Folder menu
        items = glide.GlideMenuItems.forFolder(
+         onPin: () => _handlePin(),
          onRename: () => _handleRename(),
          onShare: () => _handleShare(),
          onDelete: widget.onDelete,
@@ -182,11 +183,20 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
   }
   
   void _handlePin() async {
-    if (widget.item is Note) {
-      final note = widget.item as Note;
-      final repo = ref.read(dataRepositoryProvider);
-      await repo.updateNote(note.copyWith(isPinned: !note.isPinned));
+    final item = widget.item;
+    final repo = ref.read(dataRepositoryProvider);
+    
+    debugPrint('[DEBUG] _handlePin called for: ${item.runtimeType}, id: ${item.id}');
+    
+    if (item is Note) {
+      debugPrint('[DEBUG] Toggling Note pin: ${item.isPinned} -> ${!item.isPinned}');
+      await repo.updateNote(item.copyWith(isPinned: !item.isPinned));
+    } else if (item is Folder) {
+      debugPrint('[DEBUG] Toggling Folder pin: ${item.isPinned} -> ${!item.isPinned}');
+      await repo.updateFolder(item.copyWith(isPinned: !item.isPinned));
     }
+    
+    debugPrint('[DEBUG] _handlePin completed');
   }
   
   void _handleShare() async {
@@ -280,8 +290,10 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
      _menuOverlay?.remove();
      _menuOverlay = null;
      
-     // Unlock scrolling
-     ref.read(isGlideMenuOpenProvider.notifier).state = false;
+     // Unlock scrolling (only if widget is still mounted)
+     if (mounted) {
+       ref.read(isGlideMenuOpenProvider.notifier).state = false;
+     }
   }
 
   @override

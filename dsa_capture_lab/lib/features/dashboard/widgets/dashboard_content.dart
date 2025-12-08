@@ -83,15 +83,64 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
     }
     
     // Sync Local State if NOT dragging
-    // We check if lists are different length or different IDs to detect external updates
+    // CRITICAL: We must sync when data changes (pin/unpin, add/remove), only block during active visual reorder
+    print("DEBUG: _isDragging=$_isDragging");
     if (!_isDragging) {
       _errorMessageIfMismatch(sourceItems);
       _localItems = List.from(sourceItems);
+    } else {
+      // Even when dragging, force sync if:
+      // 1. Length changed (item added/removed)
+      // 2. Any item's isPinned changed
+      bool forceSyncNeeded = sourceItems.length != _localItems.length;
+      
+      if (!forceSyncNeeded) {
+        // Check for isPinned mismatch
+        for (final sourceItem in sourceItems) {
+          final sourceId = (sourceItem is Folder) ? sourceItem.id : (sourceItem as Note).id;
+          final sourcePinned = (sourceItem is Note) ? sourceItem.isPinned : (sourceItem as Folder).isPinned;
+          
+          bool foundInLocal = false;
+          for (final localItem in _localItems) {
+            final localId = (localItem is Folder) ? localItem.id : (localItem as Note).id;
+            if (sourceId == localId) {
+              foundInLocal = true;
+              final localPinned = (localItem is Note) ? localItem.isPinned : (localItem as Folder).isPinned;
+              if (sourcePinned != localPinned) {
+                forceSyncNeeded = true;
+                break;
+              }
+            }
+          }
+          // New item not found in local
+          if (!foundInLocal) {
+            forceSyncNeeded = true;
+          }
+          if (forceSyncNeeded) break;
+        }
+      }
+      
+      if (forceSyncNeeded) {
+        print("DEBUG: Data mismatch detected during drag, forcing sync (source=${sourceItems.length}, local=${_localItems.length})");
+        _localItems = List.from(sourceItems);
+        _isDragging = false;
+        _draggingId = null;
+      }
     }
     
     print("DEBUG: DashboardContent build. Filter=${widget.currentFilter}, Folder=$currentFolderId");
     print("DEBUG: sourceItems count: ${sourceItems.length}");
     print("DEBUG: _localItems count: ${_localItems.length}");
+    
+    // Debug: Show pinned state of first 3 items
+    for (int i = 0; i < _localItems.length && i < 3; i++) {
+      final item = _localItems[i];
+      if (item is Note) {
+        print("DEBUG: Item[$i] Note id=${item.id}, isPinned=${item.isPinned}");
+      } else if (item is Folder) {
+        print("DEBUG: Item[$i] Folder id=${item.id}, isPinned=${item.isPinned}");
+      }
+    }
     
     if (_localItems.isEmpty) {
       print("DEBUG: _localItems is empty, showing Empty State");
@@ -293,11 +342,17 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
      if (fromIndex == -1 || draggingObj == null) return;
      if (fromIndex == targetIndex) return;
      
-     // 2. SWAP / REORDER
-     // Google Keep style: If I drag Note A (idx 0) to Note C (idx 2)...
-     // List becomes [Note B, Note C, Note A] ? 
-     // No, usually it's insert.
+     // 2. PREVENT DRAGGING BETWEEN PINNED/UNPINNED SECTIONS
+     final bool isDraggingPinned = (draggingObj is Note && draggingObj.isPinned) || 
+                                    (draggingObj is Folder && draggingObj.isPinned);
+     final bool isTargetPinned = (targetItem is Note && targetItem.isPinned) || 
+                                  (targetItem is Folder && targetItem.isPinned);
      
+     if (isDraggingPinned != isTargetPinned) {
+        return; // Block the swap - can't cross pinned/unpinned boundary
+     }
+     
+     // 3. SWAP / REORDER (within same section)
      setState(() {
         _localItems.removeAt(fromIndex);
         _localItems.insert(targetIndex, draggingObj);

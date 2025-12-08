@@ -34,7 +34,8 @@ final dataVersionProvider = StateProvider<int>((ref) => 0);
 /// Active content for a folder - rebuilds when version changes
 final activeContentProvider = Provider.family<List<dynamic>, int?>((ref, folderId) {
   // Watch the version counter to trigger rebuilds
-  ref.watch(dataVersionProvider);
+  final version = ref.watch(dataVersionProvider);
+  print('[PROVIDER] activeContentProvider called, version=$version, folderId=$folderId');
   
   final repo = ref.read(dataRepositoryProvider);
   return repo.getActiveContent(folderId);

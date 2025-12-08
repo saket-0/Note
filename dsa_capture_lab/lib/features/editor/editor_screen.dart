@@ -213,6 +213,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                 isChecklist: _controller.isChecklist,
                 attachedImages: _controller.attachedImages,
                 createdAt: _controller.createdAt,
+                isNewNote: widget.existingNote == null, // Enable autofocus for new notes
                 onImageRemove: (index) {
                   setState(() => _controller.attachedImages.removeAt(index));
                   _controller.saveNote();

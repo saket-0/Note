@@ -83,7 +83,10 @@ class DataRepository {
 
   void _sortAllLists() {
     for (final list in _foldersByParent.values) {
-      list.sort((a, b) => b.position.compareTo(a.position));
+      list.sort((a, b) {
+        if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+        return b.position.compareTo(a.position);
+      });
     }
     for (final list in _notesByFolder.values) {
       list.sort((a, b) {
@@ -95,7 +98,12 @@ class DataRepository {
 
   void _notifyChange() {
     // Increment version counter to trigger provider rebuilds
-    _ref.read(dataVersionProvider.notifier).state++;
+    final newVersion = _ref.read(dataVersionProvider.notifier).state + 1;
+    _ref.read(dataVersionProvider.notifier).state = newVersion;
+    print('[REPO] _notifyChange: version now = $newVersion');
+    
+    // Force invalidation of content providers to ensure fresh data
+    _ref.invalidate(activeContentProvider);
   }
 
   // ===========================================
@@ -109,11 +117,21 @@ class DataRepository {
     
     final combined = [...folders, ...notes];
     combined.sort((a, b) {
-      final aPinned = (a is Note) ? a.isPinned : false;
-      final bPinned = (b is Note) ? b.isPinned : false;
+      final aPinned = (a is Note) ? a.isPinned : (a is Folder ? a.isPinned : false);
+      final bPinned = (b is Note) ? b.isPinned : (b is Folder ? b.isPinned : false);
       if (aPinned != bPinned) return aPinned ? -1 : 1;
       return (b as dynamic).position.compareTo((a as dynamic).position);
     });
+    
+    // Debug: Show first 3 items with pinned state
+    for (int i = 0; i < combined.length && i < 3; i++) {
+      final item = combined[i];
+      if (item is Note) {
+        print('[REPO] getActiveContent[$i]: Note id=${item.id}, isPinned=${item.isPinned}');
+      } else if (item is Folder) {
+        print('[REPO] getActiveContent[$i]: Folder id=${item.id}, isPinned=${item.isPinned}');
+      }
+    }
     
     return combined;
   }
@@ -263,8 +281,12 @@ class DataRepository {
 
   /// Update note (cache-first)
   Future<void> updateNote(Note note) async {
+    print('[REPO] updateNote called for id=${note.id}, isPinned=${note.isPinned}');
+    
     // Skip if note doesn't exist in cache (might be pending creation)
-    if (findNote(note.id) == null) {
+    final existingNote = findNote(note.id);
+    if (existingNote == null) {
+      print('[REPO] updateNote: Note NOT found in cache, skipping cache update');
       // Just persist directly if it's a real ID
       if (note.id > 0) {
         await _db.updateNote(note);
@@ -272,6 +294,7 @@ class DataRepository {
       return;
     }
     
+    print('[REPO] updateNote: Found existing note isPinned=${existingNote.isPinned}, updating to isPinned=${note.isPinned}');
     _updateNoteInCache(note);
     _notifyChange();
     
@@ -279,6 +302,7 @@ class DataRepository {
     if (note.id > 0) {
       await _db.updateNote(note);
     }
+    print('[REPO] updateNote: Complete');
   }
 
   /// Update folder (cache-first)
@@ -588,7 +612,10 @@ class DataRepository {
       _archivedItems.add(folder);
     } else {
       _foldersByParent.putIfAbsent(folder.parentId, () => []).add(folder);
-      _foldersByParent[folder.parentId]!.sort((a, b) => b.position.compareTo(a.position));
+      _foldersByParent[folder.parentId]!.sort((a, b) {
+        if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+        return b.position.compareTo(a.position);
+      });
     }
   }
 

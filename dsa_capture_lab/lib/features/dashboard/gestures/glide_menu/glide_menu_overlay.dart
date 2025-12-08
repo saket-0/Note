@@ -263,8 +263,9 @@ class GlideMenuItems {
     ];
   }
   
-  /// Menu for folders: [Delete, Share, Rename]
+  /// Menu for folders: [Delete, Share, Rename, Pin]
   static List<GlideMenuItem> forFolder({
+    required VoidCallback onPin,
     required VoidCallback onRename,
     required VoidCallback onShare,
     required VoidCallback onDelete,
@@ -287,6 +288,12 @@ class GlideMenuItems {
         icon: Icons.edit_outlined,
         color: Colors.orange.shade400,
         onExecute: onRename,
+      ),
+      GlideMenuItem(
+        label: 'Pin',
+        icon: Icons.push_pin_outlined,
+        color: Colors.amber.shade600,
+        onExecute: onPin,
       ),
     ];
   }

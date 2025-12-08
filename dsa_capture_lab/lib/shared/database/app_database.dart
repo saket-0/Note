@@ -11,7 +11,7 @@ export '../domain/entities/entities.dart';
 /// - Transaction support for atomic operations
 class AppDatabase {
   static Database? _database;
-  static const String _dbName = 'dsa_notes_v5.db'; // New DB version for clean slate
+  static const String _dbName = 'dsa_notes_v6.db'; // New DB version for folder isPinned support
 
   Future<Database> get database async {
     if (_database != null) return _database!;
@@ -35,6 +35,7 @@ class AppDatabase {
             parent_id INTEGER,
             created_at INTEGER NOT NULL,
             position INTEGER DEFAULT 0,
+            is_pinned INTEGER DEFAULT 0,
             is_archived INTEGER DEFAULT 0,
             is_deleted INTEGER DEFAULT 0
           )
@@ -124,7 +125,7 @@ class AppDatabase {
   /// Load ALL folders in a single query
   Future<List<Folder>> getAllFolders() async {
     final db = await database;
-    final maps = await db.query('folders', orderBy: 'position DESC, name ASC');
+    final maps = await db.query('folders', orderBy: 'is_pinned DESC, position DESC, name ASC');
     return maps.map((e) => Folder.fromMap(e)).toList();
   }
 
@@ -142,7 +143,7 @@ class AppDatabase {
   // FOLDER OPERATIONS
   // ===========================================
 
-  Future<int> createFolder(String name, int? parentId, {int? position}) async {
+  Future<int> createFolder(String name, int? parentId, {int? position, bool isPinned = false}) async {
     final db = await database;
     
     final finalPos = position ?? await _getNextPosition(db, 'folders', 'parent_id', parentId);
@@ -152,6 +153,7 @@ class AppDatabase {
       'parent_id': parentId,
       'created_at': DateTime.now().millisecondsSinceEpoch,
       'position': finalPos,
+      'is_pinned': isPinned ? 1 : 0,
     });
   }
 
@@ -169,6 +171,7 @@ class AppDatabase {
         'name': folder.name,
         'parent_id': folder.parentId,
         'position': folder.position,
+        'is_pinned': folder.isPinned ? 1 : 0,
         'is_archived': folder.isArchived ? 1 : 0,
         'is_deleted': folder.isDeleted ? 1 : 0,
       },

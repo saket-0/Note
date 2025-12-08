@@ -16,6 +16,7 @@ class EditorCanvas extends StatelessWidget {
   final Function(int index) onChecklistItemRemoved;
   final VoidCallback onChecklistItemAdded;
   final Color contentColor;
+  final bool isNewNote;
 
   const EditorCanvas({
     super.key,
@@ -31,6 +32,7 @@ class EditorCanvas extends StatelessWidget {
     required this.onChecklistItemRemoved,
     required this.onChecklistItemAdded,
     this.contentColor = Colors.black87,
+    this.isNewNote = false,
   });
 
   @override
@@ -78,6 +80,7 @@ class EditorCanvas extends StatelessWidget {
             TextField(
               controller: titleController,
               cursorColor: contentColor,
+              autofocus: isNewNote, // Auto-focus when creating a new note
               style: TextStyle(
                 fontSize: 24, 
                 fontWeight: FontWeight.bold,

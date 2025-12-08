@@ -8,6 +8,7 @@ class Folder {
   final int? parentId;
   final DateTime createdAt;
   final int position; 
+  final bool isPinned;
   final bool isArchived;
   final bool isDeleted;
 
@@ -16,7 +17,8 @@ class Folder {
     required this.name, 
     this.parentId, 
     required this.createdAt,
-    this.position = 0, 
+    this.position = 0,
+    this.isPinned = false,
     this.isArchived = false,
     this.isDeleted = false,
   });
@@ -28,6 +30,7 @@ class Folder {
       parentId: map['parent_id'],
       createdAt: DateTime.fromMillisecondsSinceEpoch(map['created_at']),
       position: map['position'] ?? 0,
+      isPinned: (map['is_pinned'] ?? 0) == 1,
       isArchived: (map['is_archived'] ?? 0) == 1,
       isDeleted: (map['is_deleted'] ?? 0) == 1,
     );
@@ -38,6 +41,7 @@ class Folder {
     // Use Object? to allow distinguishing null from "not provided"
     Object? parentId = _notProvided,
     int? position,
+    bool? isPinned,
     bool? isArchived,
     bool? isDeleted,
   }) {
@@ -48,6 +52,7 @@ class Folder {
       parentId: parentId == _notProvided ? this.parentId : parentId as int?,
       createdAt: createdAt,
       position: position ?? this.position,
+      isPinned: isPinned ?? this.isPinned,
       isArchived: isArchived ?? this.isArchived,
       isDeleted: isDeleted ?? this.isDeleted,
     );
