@@ -29,6 +29,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final currentFilter = ref.watch(activeFilterProvider);
     final viewMode = ref.watch(viewModeProvider);
     final isSelectionMode = ref.watch(isSelectionModeProvider);
+    final isDragging = ref.watch(isDraggingProvider);
     
     // Instantiate Controller
     final controller = DashboardController(context, ref);
@@ -106,14 +107,16 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   ),
                 );
               },
-              child: isSelectionMode
-                ? const SelectionAppBar(key: ValueKey('selection'))
-                : DashboardAppBar(
-                    key: const ValueKey('dashboard'),
-                    isRoot: isRoot,
-                    controller: controller,
-                    currentFolderId: currentFolderId,
-                  ),
+              child: isDragging
+                ? const SizedBox.shrink(key: ValueKey('hidden')) // Hide during drag
+                : isSelectionMode
+                  ? const SelectionAppBar(key: ValueKey('selection'))
+                  : DashboardAppBar(
+                      key: const ValueKey('dashboard'),
+                      isRoot: isRoot,
+                      controller: controller,
+                      currentFolderId: currentFolderId,
+                    ),
             ),
           ),
           body: Stack(

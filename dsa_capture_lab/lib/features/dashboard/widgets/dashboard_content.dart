@@ -174,9 +174,13 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
              }
            }
         },
-        onLongPress: () {
+         onLongPress: () {
            // Trigger Selection Mode with heavy haptic
            ref.read(selectionControllerProvider).selectItem(item, haptic: true);
+        },
+        // Communicate drag state to hide/show top bar
+        onDragStateChanged: (isDragging) {
+           ref.read(isDraggingProvider.notifier).state = isDragging;
         },
         onDelete: () => widget.controller.deleteItem(item),
         onArchive: (archive) => widget.controller.archiveItem(item, archive),

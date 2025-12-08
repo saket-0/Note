@@ -25,22 +25,25 @@ class GestureConfig {
 /// Gesture state machine states
 enum GestureState {
   idle,           // No touch
-  touching,       // Finger down, waiting
-  selected,       // 350ms passed, item selected/ready
-  dragging,       // User is moving the item
+  touching,       // Finger down, waiting for 350ms
+  selected,       // 350ms passed, item selected/lifted, waiting for movement
+  dragging,       // User crossed drag threshold, actively moving
 }
 
 /// A widget that implements the Perfect Gesture Protocol.
 /// 
+/// The key insight: Long press (350ms) selects but does NOT immediately drag.
+/// User must move > 10px AFTER selection to start dragging.
+/// 
 /// Normal Mode:
 /// - Tap (<200ms): Open item
-/// - Hold (350ms): Enter selection + haptic
-/// - Hold + Move: Drag single item
+/// - Hold (350ms): Enter selection + haptic (NO movement yet)
+/// - Hold + Move (>10px): Start dragging
 /// 
 /// Selection Mode:
 /// - Tap (<200ms): Toggle selection
 /// - Hold (350ms): Visual "lift" ready to move
-/// - Hold + Move: Drag ALL selected items
+/// - Hold + Move (>10px): Drag ALL selected items
 class PerfectGestureDetector extends StatefulWidget {
   final Widget child;
   
@@ -50,7 +53,7 @@ class PerfectGestureDetector extends StatefulWidget {
   /// Called when long press triggers (at 350ms, still holding)
   final VoidCallback? onLongPress;
   
-  /// Called when drag starts (after 350ms + movement)
+  /// Called when drag starts (after 350ms + movement > 10px)
   final VoidCallback? onDragStart;
   
   /// Called during drag with position updates
@@ -58,6 +61,10 @@ class PerfectGestureDetector extends StatefulWidget {
   
   /// Called when drag ends
   final VoidCallback? onDragEnd;
+  
+  /// Called when drag state changes (true = dragging, false = stopped)
+  /// Use this to hide/show the top bar
+  final void Function(bool isDragging)? onDragStateChanged;
   
   /// Whether we're currently in selection mode
   final bool isSelectionMode;
@@ -73,6 +80,7 @@ class PerfectGestureDetector extends StatefulWidget {
     this.onDragStart,
     this.onDragUpdate,
     this.onDragEnd,
+    this.onDragStateChanged,
     this.isSelectionMode = false,
     this.isSelected = false,
   });
@@ -84,9 +92,12 @@ class PerfectGestureDetector extends StatefulWidget {
 class _PerfectGestureDetectorState extends State<PerfectGestureDetector> {
   GestureState _state = GestureState.idle;
   Offset? _startPosition;
+  Offset? _longPressPosition; // Position when long press triggered
   DateTime? _startTime;
   Timer? _longPressTimer;
-  bool _dragUnlocked = false; // True after 350ms - drag is now allowed
+  
+  // THE DRAG GATE: Only true after 350ms AND movement > DRAG_SLOP
+  bool _hasCrossedDragThreshold = false;
   
   @override
   void dispose() {
@@ -98,7 +109,8 @@ class _PerfectGestureDetectorState extends State<PerfectGestureDetector> {
     _startPosition = event.position;
     _startTime = DateTime.now();
     _state = GestureState.touching;
-    _dragUnlocked = false;
+    _hasCrossedDragThreshold = false;
+    _longPressPosition = null;
     
     // Start 350ms timer
     _longPressTimer?.cancel();
@@ -111,9 +123,10 @@ class _PerfectGestureDetectorState extends State<PerfectGestureDetector> {
   void _onLongPressTriggered() {
     if (_state != GestureState.touching || !mounted) return;
     
-    // 350ms passed while holding still - UNLOCK drag and trigger selection
-    _dragUnlocked = true;
+    // 350ms passed while holding still - item is now SELECTED
+    // But NOT yet dragging! User must move to drag.
     _state = GestureState.selected;
+    _longPressPosition = _startPosition; // Remember where we were when selected
     
     // Haptic feedback
     if (widget.isSelectionMode) {
@@ -124,7 +137,7 @@ class _PerfectGestureDetectorState extends State<PerfectGestureDetector> {
       HapticFeedback.heavyImpact();
     }
     
-    // Notify: Long press triggered
+    // Notify: Long press triggered (selection happens)
     widget.onLongPress?.call();
    
     // Force rebuild for visual feedback (scale, etc.)
@@ -134,25 +147,57 @@ class _PerfectGestureDetectorState extends State<PerfectGestureDetector> {
   void _onPointerMove(PointerMoveEvent event) {
     if (_startPosition == null) return;
     
-    final distance = (event.position - _startPosition!).distance;
+    final distanceFromStart = (event.position - _startPosition!).distance;
     
-    if (_state == GestureState.touching) {
-      // Still in "waiting" phase (0-350ms)
-      if (distance > GestureConfig.dragSlop) {
-        // User moved too much during wait - this is a SCROLL, not a gesture
-        // Cancel everything and let parent ScrollView handle it
-        _cancelGesture();
-        return;
-      }
-    } else if (_state == GestureState.selected && _dragUnlocked) {
-      // After 350ms, user is moving - START DRAG
-      if (distance > GestureConfig.dragSlop) {
-        _state = GestureState.dragging;
-        widget.onDragStart?.call();
-      }
-    } else if (_state == GestureState.dragging) {
-      // Already dragging - update position
-      widget.onDragUpdate?.call(event.position);
+    switch (_state) {
+      case GestureState.touching:
+        // Still waiting for 350ms timer
+        if (distanceFromStart > GestureConfig.dragSlop) {
+          // User moved too much during wait - this is a SCROLL, not selection
+          // Cancel everything and let parent ScrollView handle it
+          _cancelGesture();
+        }
+        break;
+        
+      case GestureState.selected:
+        // Item is selected, waiting for drag threshold
+        
+        // CRITICAL: In Selection Mode, disable ALL drag-to-reorder logic
+        // Grid should be locked. Movement = scroll, not drag.
+        if (widget.isSelectionMode) {
+          // In selection mode: treat movement as scroll, cancel gesture
+          if (distanceFromStart > GestureConfig.dragSlop) {
+            _cancelGesture(); // Let parent ScrollView handle it
+          }
+          break;
+        }
+        
+        // Normal mode: allow drag after crossing threshold
+        final distanceFromLongPress = _longPressPosition != null 
+            ? (event.position - _longPressPosition!).distance 
+            : distanceFromStart;
+        
+        if (!_hasCrossedDragThreshold) {
+          if (distanceFromLongPress > GestureConfig.dragSlop) {
+            // GATE OPENED - User deliberately moved after selection
+            _hasCrossedDragThreshold = true;
+            _state = GestureState.dragging;
+            
+            // Notify: Drag state changed (hide top bar)
+            widget.onDragStateChanged?.call(true);
+            widget.onDragStart?.call();
+          }
+          // If not crossed threshold, do nothing - finger shake tolerance
+        }
+        break;
+        
+      case GestureState.dragging:
+        // Already dragging - update position
+        widget.onDragUpdate?.call(event.position);
+        break;
+        
+      case GestureState.idle:
+        break;
     }
   }
   
@@ -169,25 +214,23 @@ class _PerfectGestureDetectorState extends State<PerfectGestureDetector> {
     
     switch (_state) {
       case GestureState.touching:
-        // Released before 350ms
-        if (duration < GestureConfig.tapTimeout && distance < GestureConfig.dragSlop) {
-          // Quick tap - execute tap action
-          widget.onTap?.call();
-        }
-        // If 200-350ms and no movement, it's just a slow tap - still do tap
-        else if (distance < GestureConfig.dragSlop) {
+        // Released before 350ms - this is a TAP
+        if (distance < GestureConfig.dragSlop) {
           widget.onTap?.call();
         }
         break;
         
       case GestureState.selected:
-        // Long press happened but no drag - item is selected, don't toggle
-        // (The selection already happened in onLongPressTriggered)
+        // Long press happened but NO drag (gate never opened)
+        // Item stays selected, note "drops" back to original slot
+        // Selection already happened in onLongPressTriggered - do nothing more
         break;
         
       case GestureState.dragging:
-        // Drag ended
+        // User was dragging - finalize
         widget.onDragEnd?.call();
+        // Notify: Drag state changed (show top bar again)
+        widget.onDragStateChanged?.call(false);
         break;
         
       case GestureState.idle:
@@ -205,6 +248,7 @@ class _PerfectGestureDetectorState extends State<PerfectGestureDetector> {
     _longPressTimer?.cancel();
     if (_state == GestureState.dragging) {
       widget.onDragEnd?.call();
+      widget.onDragStateChanged?.call(false);
     }
     _reset();
   }
@@ -213,7 +257,8 @@ class _PerfectGestureDetectorState extends State<PerfectGestureDetector> {
     _longPressTimer?.cancel();
     _startPosition = null;
     _startTime = null;
-    _dragUnlocked = false;
+    _longPressPosition = null;
+    _hasCrossedDragThreshold = false;
     if (mounted) {
       setState(() => _state = GestureState.idle);
     }
@@ -223,8 +268,10 @@ class _PerfectGestureDetectorState extends State<PerfectGestureDetector> {
   Widget build(BuildContext context) {
     // Visual scale based on state
     double scale = 1.0;
-    if (_state == GestureState.selected || _state == GestureState.dragging) {
-      scale = 1.03; // Slight lift when ready to drag or dragging
+    if (_state == GestureState.selected) {
+      scale = 1.02; // Slight lift when selected (ready to drag)
+    } else if (_state == GestureState.dragging) {
+      scale = 1.05; // Larger lift when actively dragging
     }
     
     return Listener(

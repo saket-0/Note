@@ -27,3 +27,12 @@ final selectionCountProvider = Provider<int>((ref) {
 final isItemSelectedProvider = Provider.family<bool, String>((ref, itemKey) {
   return ref.watch(selectedItemsProvider).contains(itemKey);
 });
+
+// ============================================
+// DRAG STATE PROVIDER
+// ============================================
+
+/// Is any item currently being dragged?
+/// Used to hide the top bar during active drag
+final isDraggingProvider = StateProvider<bool>((ref) => false);
+

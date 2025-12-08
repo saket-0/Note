@@ -22,10 +22,13 @@ class DashboardGridItem extends ConsumerStatefulWidget {
   final bool isSelectionMode;
   final VoidCallback? onLongPress;
 
-  // New Callbacks for Keep-style Reorder
+  // Callbacks for Keep-style Reorder
   final VoidCallback? onDragStart;
   final Function(DraggableDetails)? onDragEnd;
   final Function(String incomingKey, String zone)? onHoverReorder;
+  
+  // Callback for drag state changes (to hide top bar)
+  final void Function(bool isDragging)? onDragStateChanged;
 
   const DashboardGridItem({
     super.key,
@@ -42,6 +45,7 @@ class DashboardGridItem extends ConsumerStatefulWidget {
     this.onDragStart,
     this.onDragEnd,
     this.onHoverReorder,
+    this.onDragStateChanged,
   });
 
   @override
@@ -252,7 +256,7 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
                     isSelected: widget.isSelected,
                     onTap: widget.onTap,
                     onLongPress: widget.onLongPress,
-                    // Note: actual drag is handled by LongPressDraggable above
+                    onDragStateChanged: widget.onDragStateChanged,
                     child: AnimatedScale(
                       scale: scale,
                       duration: const Duration(milliseconds: 100),
