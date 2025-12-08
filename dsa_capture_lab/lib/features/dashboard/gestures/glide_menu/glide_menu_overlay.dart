@@ -193,14 +193,13 @@ class GlideMenuOverlayState extends State<GlideMenuOverlay>
 
 /// Default menu items factory
 class GlideMenuItems {
-  /// Create default menu items for a note
-  static List<GlideMenuItem> forNote({
+  /// Menu for text notes: [Delete, Share, Color, Pin]
+  static List<GlideMenuItem> forTextNote({
     required VoidCallback onPin,
     required VoidCallback onColor,
     required VoidCallback onShare,
     required VoidCallback onDelete,
   }) {
-    // Items ordered bottom-to-top (closest to finger first)
     return [
       GlideMenuItem(
         label: 'Delete',
@@ -229,7 +228,42 @@ class GlideMenuItems {
     ];
   }
   
-  /// Create default menu items for a folder
+  /// Menu for image notes: [Delete, Share, Rename, Pin]
+  static List<GlideMenuItem> forImageNote({
+    required VoidCallback onPin,
+    required VoidCallback onRename,
+    required VoidCallback onShare,
+    required VoidCallback onDelete,
+  }) {
+    return [
+      GlideMenuItem(
+        label: 'Delete',
+        icon: Icons.delete_outline,
+        color: Colors.red.shade400,
+        onExecute: onDelete,
+      ),
+      GlideMenuItem(
+        label: 'Share',
+        icon: Icons.share_outlined,
+        color: Colors.blue.shade400,
+        onExecute: onShare,
+      ),
+      GlideMenuItem(
+        label: 'Rename',
+        icon: Icons.edit_outlined,
+        color: Colors.orange.shade400,
+        onExecute: onRename,
+      ),
+      GlideMenuItem(
+        label: 'Pin',
+        icon: Icons.push_pin_outlined,
+        color: Colors.amber.shade600,
+        onExecute: onPin,
+      ),
+    ];
+  }
+  
+  /// Menu for folders: [Delete, Share, Rename]
   static List<GlideMenuItem> forFolder({
     required VoidCallback onRename,
     required VoidCallback onShare,
@@ -256,4 +290,12 @@ class GlideMenuItems {
       ),
     ];
   }
+  
+  /// Legacy alias for forTextNote
+  static List<GlideMenuItem> forNote({
+    required VoidCallback onPin,
+    required VoidCallback onColor,
+    required VoidCallback onShare,
+    required VoidCallback onDelete,
+  }) => forTextNote(onPin: onPin, onColor: onColor, onShare: onShare, onDelete: onDelete);
 }

@@ -8,6 +8,7 @@ import '../../../shared/data/data_repository.dart';
 import '../../../shared/services/folder_service.dart';
 import '../gestures/body_zone/perfect_gesture.dart';
 import '../gestures/glide_menu/glide_menu_overlay.dart' as glide;
+import 'package:share_plus/share_plus.dart';
 
 class DashboardGridItem extends ConsumerStatefulWidget {
   final dynamic item;
@@ -104,19 +105,30 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
      _overlayKey = GlobalKey<glide.GlideMenuOverlayState>();
      
      // Create menu items based on item type
-     final isFolder = widget.item is Folder;
-     final List<glide.GlideMenuItem> items = isFolder
-       ? glide.GlideMenuItems.forFolder(
-           onRename: () => _handleRename(),
-           onShare: () => _handleShare(),
-           onDelete: widget.onDelete,
-         )
-       : glide.GlideMenuItems.forNote(
-           onPin: () => _handlePin(),
-           onColor: () => _showColorPicker(),
-           onShare: () => _handleShare(),
-           onDelete: widget.onDelete,
-         );
+     final item = widget.item;
+     final List<glide.GlideMenuItem> items;
+     
+     if (item is Folder) {
+       items = glide.GlideMenuItems.forFolder(
+         onRename: () => _handleRename(),
+         onShare: () => _handleShare(),
+         onDelete: widget.onDelete,
+       );
+     } else if (item is Note && item.fileType == 'image') {
+       items = glide.GlideMenuItems.forImageNote(
+         onPin: () => _handlePin(),
+         onRename: () => _handleRename(),
+         onShare: () => _handleShare(),
+         onDelete: widget.onDelete,
+       );
+     } else {
+       items = glide.GlideMenuItems.forTextNote(
+         onPin: () => _handlePin(),
+         onColor: () => _showColorPicker(),
+         onShare: () => _handleShare(),
+         onDelete: widget.onDelete,
+       );
+     }
      
      _menuOverlay = OverlayEntry(
        builder: (context) => Stack(
@@ -142,14 +154,63 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
     }
   }
   
-  void _handleShare() {
-    // TODO: Implement share using share_plus
-    debugPrint("Share: ${widget.item.id}");
+  void _handleShare() async {
+    final item = widget.item;
+    
+    if (item is Note) {
+      if (item.fileType == 'image' && item.imagePath != null) {
+        await Share.shareXFiles([XFile(item.imagePath!)], text: item.title);
+      } else {
+        await Share.share('${item.title}\n\n${item.content}');
+      }
+    } else if (item is Folder) {
+      // Folders not supported yet
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Sharing folders not supported yet')),
+        );
+      }
+    }
   }
   
   void _handleRename() {
-    // TODO: Show rename dialog
-    debugPrint("Rename: ${widget.item.id}");
+    final item = widget.item;
+    final controller = TextEditingController(
+      text: item is Folder ? item.name : (item as Note).title,
+    );
+    
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(item is Folder ? 'Rename Folder' : 'Rename Note'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Enter new name'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final newName = controller.text.trim();
+              if (newName.isNotEmpty) {
+                Navigator.pop(dialogContext);
+                final repo = ref.read(dataRepositoryProvider);
+                if (item is Folder) {
+                  await repo.updateFolder(item.copyWith(name: newName));
+                } else if (item is Note) {
+                  await repo.updateNote(item.copyWith(title: newName));
+                }
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
   }
   
   void _showColorPicker() {
@@ -435,11 +496,46 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
        else if (item.fileType == 'image' && item.imagePath != null) {
           contentBody = ClipRRect(
             borderRadius: BorderRadius.circular(15),
-            child: Image.file(
-              File(item.imagePath!),
-              fit: BoxFit.cover,
-              cacheWidth: 400,
-              gaplessPlayback: true,
+            child: Stack(
+              children: [
+                Image.file(
+                  File(item.imagePath!),
+                  fit: BoxFit.cover,
+                  width: double.infinity,
+                  cacheWidth: 400,
+                  gaplessPlayback: true,
+                ),
+                // Gradient label overlay
+                if (item.title.isNotEmpty)
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.transparent,
+                            Colors.black.withOpacity(0.7),
+                          ],
+                        ),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+                      child: Text(
+                        item.title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           );
        } 
