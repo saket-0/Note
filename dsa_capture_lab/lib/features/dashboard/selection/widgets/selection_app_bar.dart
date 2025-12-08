@@ -7,6 +7,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../providers/dashboard_state.dart';
 import '../selection.dart';
 
 /// The "Action Mode" app bar shown when items are selected.
@@ -53,6 +54,12 @@ class SelectionAppBar extends ConsumerWidget implements PreferredSizeWidget {
         ),
       ),
       actions: [
+        // Group into Folder Button
+        IconButton(
+          icon: const Icon(Icons.create_new_folder_outlined, color: Colors.white),
+          onPressed: () => _showGroupDialog(context, ref, controller, count),
+          tooltip: 'Group into Folder',
+        ),
         // Pin Button
         IconButton(
           icon: const Icon(Icons.push_pin_outlined, color: Colors.white),
@@ -89,6 +96,75 @@ class SelectionAppBar extends ConsumerWidget implements PreferredSizeWidget {
       ],
     );
   }
+  
+  void _showGroupDialog(BuildContext context, WidgetRef ref, SelectionController controller, int count) {
+    final textController = TextEditingController(text: 'New Folder');
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF2C2C2C),
+        title: const Text('Create Folder', style: TextStyle(color: Colors.white)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Group $count items into a new folder',
+              style: const TextStyle(color: Colors.white70, fontSize: 14),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: textController,
+              autofocus: true,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Folder Name',
+                labelStyle: TextStyle(color: Colors.white54),
+                enabledBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: Colors.white24),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: Colors.blueAccent),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final folderName = textController.text.trim();
+              if (folderName.isEmpty) {
+                _showSnackbar(context, 'Folder name cannot be empty');
+                return;
+              }
+              
+              final currentFolderId = ref.read(currentFolderProvider);
+              final folderId = await controller.groupSelectedIntoFolder(
+                folderName,
+                currentFolderId,
+              );
+              
+              if (folderId != null && context.mounted) {
+                _showSnackbar(context, 'Created folder "$folderName" with $count items');
+              } else if (context.mounted) {
+                _showSnackbar(context, 'Failed to create folder. Please try again.');
+              }
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.blueAccent),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+  }
+
   
   void _showColorPicker(BuildContext context, WidgetRef ref, SelectionController controller, int count) {
     final colors = [

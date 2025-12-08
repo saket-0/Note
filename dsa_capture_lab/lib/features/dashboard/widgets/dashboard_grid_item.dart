@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/domain/entities/entities.dart';
 import '../../../shared/data/data_repository.dart';
+import '../../../shared/services/folder_service.dart';
 import '../gestures/body_zone/perfect_gesture.dart';
 import '../gestures/glide_menu/glide_menu_overlay.dart' as glide;
 
@@ -53,8 +54,7 @@ class DashboardGridItem extends ConsumerStatefulWidget {
 }
 
 class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
-  String _hoverState = 'idle'; // idle, merge
-  DateTime? _hoverStartTime; // For hover-to-merge timing
+  String _hoverState = 'idle'; // idle, folder-hover
   
   // Glide Menu State
   final GlobalKey _iconKey = GlobalKey();
@@ -197,32 +197,52 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
         // Wraps Content + Drag Logic
         DragTarget<String>(
             onWillAccept: (incoming) {
-               return incoming != dragKey;
+               // Accept only if: 1) target is a Folder, 2) not dropping on itself
+               final isFolder = widget.item is Folder;
+               return incoming != dragKey && isFolder;
             },
             onMove: (details) {
-               final now = DateTime.now();
-               if (_hoverStartTime == null) _hoverStartTime = now;
-               
-               if (_hoverStartTime != null && now.difference(_hoverStartTime!).inMilliseconds > 600) {
-                 if (_hoverState != 'merge') {
-                   setState(() {
-                     _hoverState = 'merge';
-                     HapticFeedback.lightImpact();
-                   });
-                 }
-               } else {
-                  if (widget.onHoverReorder != null) {
-                    widget.onHoverReorder?.call(details.data as String, 'center');
-                  }
+               // Show immediate blue border for valid folder targets
+               // (No dwell timer needed - folder acceptance is instant)
+               if (widget.item is Folder && _hoverState != 'folder-hover') {
+                 setState(() {
+                   _hoverState = 'folder-hover';
+                 });
+                 HapticFeedback.lightImpact();
+               }
+               // Reorder logic delegated to parent via callback (for non-folder targets)
+               // This callback is now only called when NOT over a folder
+               if (widget.item is! Folder && widget.onHoverReorder != null) {
+                 widget.onHoverReorder?.call(details.data, 'center');
                }
             },
             onLeave: (_) {
-               _hoverStartTime = null;
                setState(() => _hoverState = 'idle');
             },
-            onAccept: (incomingKey) => widget.onDrop(incomingKey, _hoverState),
+            onAccept: (incomingKey) async {
+               // Move item into folder via FolderService
+               if (widget.item is Folder) {
+                 final folderService = ref.read(folderServiceProvider);
+                 final success = await folderService.moveItemByKey(
+                   itemKey: incomingKey,
+                   targetFolderId: widget.item.id,
+                 );
+                 if (!success && mounted) {
+                   ScaffoldMessenger.of(context).showSnackBar(
+                     const SnackBar(
+                       content: Text('Failed to move item to folder'),
+                       duration: Duration(seconds: 2),
+                     ),
+                   );
+                 }
+               } else {
+                 // Fallback to original drop handler for reorder
+                 widget.onDrop(incomingKey, _hoverState);
+               }
+               setState(() => _hoverState = 'idle');
+            },
             builder: (context, candidates, rejects) {
-               final bool showMergeRequest = _hoverState == 'merge';
+               final bool showFolderHover = _hoverState == 'folder-hover';
                
                // Build the gesture-aware content
                Widget gestureContent = PerfectGestureDetector(
@@ -234,7 +254,7 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
                    scale: scale,
                    duration: const Duration(milliseconds: 100),
                    child: Container(
-                     decoration: showMergeRequest ? BoxDecoration(
+                     decoration: showFolderHover ? BoxDecoration(
                        border: Border.all(color: Colors.blueAccent, width: 4),
                        borderRadius: BorderRadius.circular(15)
                      ) : null,

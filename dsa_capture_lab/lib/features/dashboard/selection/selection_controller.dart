@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../shared/data/data_repository.dart';
 import '../../../../shared/domain/entities/entities.dart';
+import '../../../../shared/services/folder_service.dart';
 import 'providers/selection_providers.dart';
 
 /// Controller for selection-related actions
@@ -138,6 +139,59 @@ class SelectionController {
   // ============================================
   // HELPERS
   // ============================================
+  
+  /// Get all selected items (notes and folders)
+  List<dynamic> getSelectedItems() {
+    final items = <dynamic>[];
+    for (final key in selectedItems) {
+      final parsed = _parseKey(key);
+      if (parsed == null) continue;
+      
+      dynamic item;
+      if (parsed.type == 'folder') {
+        item = _repo.findFolder(parsed.id);
+      } else {
+        item = _repo.findNote(parsed.id);
+      }
+      
+      if (item != null) items.add(item);
+    }
+    return items;
+  }
+  
+  // ============================================
+  // FOLDER GROUPING
+  // ============================================
+  
+  /// Group all selected items into a new folder.
+  /// 
+  /// On success: clears selection, returns folder ID
+  /// On failure: keeps selection (allow retry), returns null
+  Future<int?> groupSelectedIntoFolder(String folderName, int? parentId) async {
+    final folderService = _ref.read(folderServiceProvider);
+    final items = getSelectedItems();
+    
+    if (items.isEmpty) {
+      return null;
+    }
+    
+    try {
+      final folderId = await folderService.createFolderFromSelection(
+        items: items,
+        folderName: folderName,
+        parentId: parentId,
+      );
+      
+      if (folderId != null) {
+        HapticFeedback.mediumImpact();
+        clearSelection();
+      }
+      return folderId;
+    } catch (e) {
+      // Error handled by FolderService, do NOT clear selection
+      return null;
+    }
+  }
   
   String _getItemKey(dynamic item) {
     return (item is Folder) ? "folder_${item.id}" : "note_${item.id}";
