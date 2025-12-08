@@ -190,8 +190,7 @@ class DashboardAppBar extends ConsumerWidget implements PreferredSizeWidget {
                           itemBuilder: (_, i) {
                             List<Note> displayList;
                             if (query.isEmpty) {
-                              displayList = List.from(allNotes)
-                                ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+                              displayList = List.from(allNotes);
                               displayList = displayList.take(5).toList();
                             } else {
                               displayList = filtered;

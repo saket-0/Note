@@ -1,15 +1,15 @@
 import '../domain/entities/entities.dart';
 
 class LayoutService {
-  static const int kSpacing = 10000;
+  static const int kSpacing = 1000000;
 
   /// Get position for a new item (TOP of the list).
   /// Assumes items are sorted by position DESC.
   static int getNewItemPosition(List<dynamic> items) {
     if (items.isEmpty) return kSpacing;
     
-    // Find absolute max position regardless of sort, just to be safe
-    int maxPos = -1000000000; // Arbitrary low number
+    // Find absolute max position regardless of sort
+    int maxPos = 0; 
     for (final item in items) {
        int pos = 0;
        if (item is Note) pos = item.position;
@@ -17,9 +17,7 @@ class LayoutService {
        if (pos > maxPos) maxPos = pos;
     }
     
-    // If list was empty effectively (maxPos still low)
-    if (maxPos == -1000000000) return kSpacing;
-    
+    // Always ensure new position is strictly greater than max
     return maxPos + kSpacing;
   }
   

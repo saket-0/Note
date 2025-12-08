@@ -23,31 +23,40 @@ class CameraViewModel extends StateNotifier<BatchCameraState> {
     state = state.copyWith(isBatchMode: isBatch);
   }
 
-  // Instant Batch Save - OPTIMISTIC via DataRepository
-  Future<void> captureBatchPhoto(String path, int? parentFolderId) async {
-    // 1. Ensure Batch Folder Exists
-    int folderId;
-    if (state.activeBatchFolderId == null) {
-      final String folderName = "Batch ${DateTime.now().hour}:${DateTime.now().minute}";
-      
-      // Create folder via repository (optimistic)
+  // Lock to prevent duplicate folder creation race conditions
+  Future<void>? _folderCreationFuture;
+
+  Future<void> _createBatchFolder(int? parentFolderId) async {
+      final String folderName = "Batch ${DateTime.now().hour}:${DateTime.now().minute}:${DateTime.now().second}";
       final newFolderId = await _repo.createFolder(
         name: folderName,
         parentId: parentFolderId,
       );
-      
-      folderId = newFolderId;
       state = state.copyWith(activeBatchFolderId: newFolderId);
-    } else {
-      folderId = state.activeBatchFolderId!;
+  }
+
+  // Instant Batch Save - OPTIMISTIC via DataRepository
+  Future<void> captureBatchPhoto(String path, int? parentFolderId) async {
+    // 1. Ensure Batch Folder Exists (Atomic Check)
+    if (state.activeBatchFolderId == null) {
+      if (_folderCreationFuture != null) {
+        await _folderCreationFuture;
+      } else {
+        _folderCreationFuture = _createBatchFolder(parentFolderId);
+        await _folderCreationFuture;
+        _folderCreationFuture = null;
+      }
     }
+    
+    // Safety check
+    if (state.activeBatchFolderId == null) return;
 
     // 2. Create Note via repository (optimistic)
     final noteId = await _repo.createNote(
       title: "Img ${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}",
       content: "",
       imagePath: path,
-      folderId: folderId,
+      folderId: state.activeBatchFolderId, // Use guaranteed ID
       fileType: 'image',
     );
 
