@@ -89,43 +89,48 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
       _errorMessageIfMismatch(sourceItems);
       _localItems = List.from(sourceItems);
     } else {
-      // Even when dragging, force sync if:
-      // 1. Length changed (item added/removed)
-      // 2. Any item's isPinned changed
-      bool forceSyncNeeded = sourceItems.length != _localItems.length;
+      // During drag, we need to:
+      // 1. If items were added/removed - force full sync and cancel drag
+      // 2. If isPinned changed for any item - force full sync (items need re-sorting)
+      // 3. Otherwise - keep order stable
       
-      if (!forceSyncNeeded) {
-        // Check for isPinned mismatch
-        for (final sourceItem in sourceItems) {
-          final sourceId = (sourceItem is Folder) ? sourceItem.id : (sourceItem as Note).id;
+      // Build source map for comparison
+      final Map<String, dynamic> sourceMap = {};
+      final Set<String> sourceIds = {};
+      for (final item in sourceItems) {
+        final key = (item is Folder) ? "folder_${item.id}" : "note_${item.id}";
+        sourceIds.add(key);
+        sourceMap[key] = item;
+      }
+      
+      // Build local IDs set and check for isPinned changes
+      final Set<String> localIds = {};
+      bool isPinnedChanged = false;
+      for (final localItem in _localItems) {
+        final key = (localItem is Folder) ? "folder_${localItem.id}" : "note_${localItem.id}";
+        localIds.add(key);
+        
+        final sourceItem = sourceMap[key];
+        if (sourceItem != null) {
+          final localPinned = (localItem is Note) ? localItem.isPinned : (localItem as Folder).isPinned;
           final sourcePinned = (sourceItem is Note) ? sourceItem.isPinned : (sourceItem as Folder).isPinned;
-          
-          bool foundInLocal = false;
-          for (final localItem in _localItems) {
-            final localId = (localItem is Folder) ? localItem.id : (localItem as Note).id;
-            if (sourceId == localId) {
-              foundInLocal = true;
-              final localPinned = (localItem is Note) ? localItem.isPinned : (localItem as Folder).isPinned;
-              if (sourcePinned != localPinned) {
-                forceSyncNeeded = true;
-                break;
-              }
-            }
+          if (localPinned != sourcePinned) {
+            isPinnedChanged = true;
           }
-          // New item not found in local
-          if (!foundInLocal) {
-            forceSyncNeeded = true;
-          }
-          if (forceSyncNeeded) break;
         }
       }
       
-      if (forceSyncNeeded) {
-        print("DEBUG: Data mismatch detected during drag, forcing sync (source=${sourceItems.length}, local=${_localItems.length})");
+      // Check if item SET changed (add/remove)
+      final bool itemsChanged = !sourceIds.containsAll(localIds) || !localIds.containsAll(sourceIds);
+      
+      if (itemsChanged || isPinnedChanged) {
+        // Items added/removed OR isPinned changed - must reset to re-sort
+        print("DEBUG: Forcing sync (itemsChanged=$itemsChanged, isPinnedChanged=$isPinnedChanged)");
         _localItems = List.from(sourceItems);
         _isDragging = false;
         _draggingId = null;
       }
+      // If only other data changed (not isPinned, not add/remove), keep order stable
     }
     
     print("DEBUG: DashboardContent build. Filter=${widget.currentFilter}, Folder=$currentFolderId");
