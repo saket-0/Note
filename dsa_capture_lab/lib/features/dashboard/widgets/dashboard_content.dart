@@ -29,6 +29,7 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
   List<dynamic> _localItems = [];
   bool _isDragging = false;
   String? _draggingId; // "note_123" or "folder_456"
+  int? _lastFolderId;
 
   @override
   void didUpdateWidget(DashboardContent oldWidget) {
@@ -41,6 +42,14 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
   Widget build(BuildContext context) {
     final currentFolderId = ref.watch(currentFolderProvider);
     
+    // Detect Folder Change & Reset
+    if (currentFolderId != _lastFolderId) {
+      _lastFolderId = currentFolderId;
+      _isDragging = false;
+      _draggingId = null;
+      _localItems = [];
+    }
+
     // Fetch Source of Truth
     final List<dynamic> sourceItems;
     if (widget.currentFilter == DashboardFilter.active) {
