@@ -107,8 +107,15 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   ),
                 );
               },
+              // When dragging: show search bar (normal mode), not selection bar
+              // This gives the user a clean view while repositioning
               child: isDragging
-                ? const SizedBox.shrink(key: ValueKey('hidden')) // Hide during drag
+                ? DashboardAppBar(
+                    key: const ValueKey('dashboard'),
+                    isRoot: isRoot,
+                    controller: controller,
+                    currentFolderId: currentFolderId,
+                  )
                 : isSelectionMode
                   ? const SelectionAppBar(key: ValueKey('selection'))
                   : DashboardAppBar(

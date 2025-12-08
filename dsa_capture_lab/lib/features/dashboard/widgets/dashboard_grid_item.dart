@@ -243,10 +243,11 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
                  ),
                );
                
-               // CRITICAL: When in selection mode, completely DISABLE drag-to-reorder
-               // Grid is LOCKED. Only taps work (to toggle selection).
+               // GRID LOCK: When selection mode is active, disable drag-to-reorder
+               // The first item being dragged won't rebuild until release, so it can still drag
+               // Other items will have isSelectionMode=true and won't get LongPressDraggable
                if (widget.isSelectionMode) {
-                 return gestureContent; // No LongPressDraggable wrapper
+                 return gestureContent; // No LongPressDraggable = grid locked
                }
                
                // Normal mode: Enable drag-to-reorder with LongPressDraggable

@@ -179,8 +179,13 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
            ref.read(selectionControllerProvider).selectItem(item, haptic: true);
         },
         // Communicate drag state to hide/show top bar
+        // When drag ends (isDragging = false), clear selection to return to normal mode
         onDragStateChanged: (isDragging) {
            ref.read(isDraggingProvider.notifier).state = isDragging;
+           if (!isDragging) {
+             // Drag ended: deselect all items, return to normal search bar
+             ref.read(selectionControllerProvider).clearSelection();
+           }
         },
         onDelete: () => widget.controller.deleteItem(item),
         onArchive: (archive) => widget.controller.archiveItem(item, archive),

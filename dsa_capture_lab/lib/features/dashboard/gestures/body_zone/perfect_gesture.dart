@@ -100,6 +100,10 @@ class _PerfectGestureDetectorState extends ConsumerState<PerfectGestureDetector>
   // THE DRAG GATE: Only true after 350ms AND movement > DRAG_SLOP
   bool _hasCrossedDragThreshold = false;
   
+  // STALE STATE FIX: Track if selection mode was active when touch STARTED
+  // This prevents blocking drag when our own long press just turned on selection mode
+  bool _wasSelectionModeAtStart = false;
+  
   @override
   void dispose() {
     _longPressTimer?.cancel();
@@ -112,6 +116,14 @@ class _PerfectGestureDetectorState extends ConsumerState<PerfectGestureDetector>
     _state = GestureState.touching;
     _hasCrossedDragThreshold = false;
     _longPressPosition = null;
+    
+    // CRITICAL: Capture selection mode state NOW, at touch start
+    // This is used to decide if drag should be blocked
+    // If selection was already active BEFORE this touch, block drag
+    // If selection is OFF now, we allow drag (even if our long press turns it on)
+    if (mounted) {
+      _wasSelectionModeAtStart = ref.read(isSelectionModeProvider);
+    }
     
     // Start 350ms timer
     _longPressTimer?.cancel();
@@ -168,17 +180,12 @@ class _PerfectGestureDetectorState extends ConsumerState<PerfectGestureDetector>
       case GestureState.selected:
         // Item is selected, waiting for drag threshold
         
-        // Guard: ensure widget is still mounted before accessing ref
-        if (!mounted) return;
-        
-        // READ LIVE STATE: Check current selection mode from provider
-        // This fixes the 'stale state' bug where other items don't know selection mode changed
-        final isSelectionMode = ref.read(isSelectionModeProvider);
-        
-        // CRITICAL: In Selection Mode, disable ALL drag-to-reorder logic
-        // Grid should be locked. Movement = scroll, not drag.
-        if (isSelectionMode) {
-          // In selection mode: treat movement as scroll, cancel gesture
+        // USE THE FLAG CAPTURED AT TOUCH START
+        // This fixes the bug where our own long press turns on selection mode
+        // and then blocks drag. We only block drag if selection was ALREADY active
+        // when the user first touched down.
+        if (_wasSelectionModeAtStart) {
+          // Selection was active BEFORE this touch - block drag
           if (distanceFromStart > GestureConfig.dragSlop) {
             _cancelGesture(); // Let parent ScrollView handle it
           }
