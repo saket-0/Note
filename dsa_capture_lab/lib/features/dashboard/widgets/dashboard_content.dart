@@ -5,7 +5,7 @@ import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import '../../../shared/domain/entities/entities.dart';
 import '../controllers/dashboard_controller.dart';
 import '../providers/dashboard_state.dart';
-import '../providers/selection_state.dart';
+import '../selection/selection.dart';
 import 'dashboard_grid_item.dart';
 
 class DashboardContent extends ConsumerStatefulWidget {
@@ -115,14 +115,8 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
     // Opacity 0 for the item being dragged (to create the "Hole")
     bool isBeingDragged = _draggingId == itemKey;
     
-    // Selection State
-    final selectedItems = ref.watch(selectedItemsProvider); // We need to import this or expose getter
-    // Since we are inside DashboardContent (in widgets folder), we can import the provider directly 
-    // OR use the controller getter if we pass it down? 
-    // Ideally, keep UI reactive by watching the Provider directly.
-    // We already imported providers/dashboard_state.dart. We need providers/selection_state.dart.
-    
-    final bool isSelected = selectedItems.contains(itemKey);
+    // Selection State (Using isolated selection module)
+    final bool isSelected = ref.watch(isItemSelectedProvider(itemKey));
     final bool isSelectionMode = ref.watch(isSelectionModeProvider);
 
     return Opacity(
@@ -170,7 +164,8 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
         onDrop: (incomingKey, zone) => widget.controller.handleDrop(incomingKey, item, zone, items),
         onTap: () {
            if (isSelectionMode) {
-              widget.controller.toggleSelection(item);
+              // Use modular selection controller
+              ref.read(selectionControllerProvider).toggleSelection(item);
            } else {
              if (item is Folder) {
                ref.read(currentFolderProvider.notifier).state = item.id;
@@ -180,11 +175,8 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
            }
         },
         onLongPress: () {
-           // Trigger Selection Mode
-           if (!isSelectionMode) {
-              widget.controller.toggleSelection(item);
-              HapticFeedback.selectionClick();
-           }
+           // Trigger Selection Mode with heavy haptic
+           ref.read(selectionControllerProvider).selectItem(item, haptic: true);
         },
         onDelete: () => widget.controller.deleteItem(item),
         onArchive: (archive) => widget.controller.archiveItem(item, archive),

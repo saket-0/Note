@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/domain/entities/entities.dart';
-import '../controllers/dashboard_controller.dart';
-import 'glide_menu_overlay.dart';
+import '../../../shared/data/data_repository.dart';
+import '../gestures/body_zone/perfect_gesture.dart';
+import '../gestures/glide_menu/glide_menu_overlay.dart' as glide;
 
 class DashboardGridItem extends ConsumerStatefulWidget {
   final dynamic item;
@@ -49,13 +50,13 @@ class DashboardGridItem extends ConsumerStatefulWidget {
 
 class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
   String _hoverState = 'idle'; // idle, merge
-  DateTime? _hoverStartTime;
+  DateTime? _hoverStartTime; // For hover-to-merge timing
   
   // Glide Menu State
   final GlobalKey _iconKey = GlobalKey();
-  GlobalKey<GlideMenuOverlayState> _overlayKey = GlobalKey();
+  GlobalKey<glide.GlideMenuOverlayState> _overlayKey = GlobalKey();
   OverlayEntry? _menuOverlay;
-  Alignment _iconAlignment = Alignment.bottomRight; // Default
+  Alignment _iconAlignment = Alignment.bottomRight;
   
   @override
   void initState() {
@@ -84,36 +85,68 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
      });
   }
 
-  // --- GLIDE MENU LOGIC ---
+  // --- GLIDE MENU LOGIC (Using Modular System) ---
 
   void _showGlideMenu(PointerDownEvent event) {
      HapticFeedback.mediumImpact();
      
-     // 1. Get Anchor Position (Center of Icon)
      final RenderBox iconBox = _iconKey.currentContext!.findRenderObject() as RenderBox;
      final Offset iconCenter = iconBox.localToGlobal(iconBox.size.center(Offset.zero));
      
-     // 2. Create Overlay
-     _overlayKey = GlobalKey<GlideMenuOverlayState>();
+     _overlayKey = GlobalKey<glide.GlideMenuOverlayState>();
+     
+     // Create menu items based on item type
+     final isFolder = widget.item is Folder;
+     final List<glide.GlideMenuItem> items = isFolder
+       ? glide.GlideMenuItems.forFolder(
+           onRename: () => _handleRename(),
+           onShare: () => _handleShare(),
+           onDelete: widget.onDelete,
+         )
+       : glide.GlideMenuItems.forNote(
+           onPin: () => _handlePin(),
+           onColor: () => _showColorPicker(),
+           onShare: () => _handleShare(),
+           onDelete: widget.onDelete,
+         );
+     
      _menuOverlay = OverlayEntry(
-       builder: (context) => GlideMenuOverlay(
-         key: _overlayKey,
-         anchorPosition: iconCenter,
-         onClose: _closeGlideMenu,
-         onRename: () {
-            // TODO: Extract Rename Logic
-            // For now, reuse creation dialog or create a new dedicated one.
-            print("Action: Rename ${widget.item.id}");
-         },
-         onDelete: widget.onDelete,
-         onShare: () {
-            print("Action: Share ${widget.item.id}");
-            // Use Share Plus plugin here
-         },
-       )
+       builder: (context) => Stack(
+         children: [
+           glide.GlideMenuOverlay(
+             key: _overlayKey,
+             anchorPosition: iconCenter,
+             items: items,
+             onClose: _closeGlideMenu,
+           ),
+         ],
+       ),
      );
      
      Overlay.of(context).insert(_menuOverlay!);
+  }
+  
+  void _handlePin() async {
+    if (widget.item is Note) {
+      final note = widget.item as Note;
+      final repo = ref.read(dataRepositoryProvider);
+      await repo.updateNote(note.copyWith(isPinned: !note.isPinned));
+    }
+  }
+  
+  void _handleShare() {
+    // TODO: Implement share using share_plus
+    debugPrint("Share: ${widget.item.id}");
+  }
+  
+  void _handleRename() {
+    // TODO: Show rename dialog
+    debugPrint("Rename: ${widget.item.id}");
+  }
+  
+  void _showColorPicker() {
+    // TODO: Show color picker bottom sheet
+    debugPrint("Color: ${widget.item.id}");
   }
 
   void _updateGlideMenu(PointerMoveEvent event) {
@@ -166,7 +199,7 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
                final now = DateTime.now();
                if (_hoverStartTime == null) _hoverStartTime = now;
                
-               if (_hoverStartTime != null && now.difference(_hoverStartTime!).inMilliseconds > 500) {
+               if (_hoverStartTime != null && now.difference(_hoverStartTime!).inMilliseconds > 600) {
                  if (_hoverState != 'merge') {
                    setState(() {
                      _hoverState = 'merge';
@@ -187,9 +220,11 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
             builder: (context, candidates, rejects) {
                final bool showMergeRequest = _hoverState == 'merge';
                
+               // PerfectGestureDetector handles the 350ms "lock" before drag unlocks
+               // Works in BOTH normal and selection mode
                return LongPressDraggable<String>(
                   data: dragKey,
-                  delay: const Duration(milliseconds: 300),
+                  delay: const Duration(milliseconds: 350), // 350ms lock
                   onDragStarted: widget.onDragStart,
                   onDragEnd: widget.onDragEnd,
                   feedback: Material(
@@ -207,26 +242,20 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
                     ),
                   ),
                   childWhenDragging: Opacity(
-                    opacity: 0.0, 
+                    opacity: 0.3, // Ghostly partial opacity
                     child: _buildContent(),
                   ),
                   onDragCompleted: () {},
-                  child: AnimatedScale(
-                    scale: scale,
-                    duration: const Duration(milliseconds: 100),
-                    child: GestureDetector(
-                      onTap: () {
-                          // Zone B Handler
-                         if (widget.isSelectionMode) {
-                            // If user TAPS body in select mode, toggle select
-                            // But maybe we want the Menu to still work? 
-                            // Usually Selection Mode disables interacting with content.
-                            // Let's allow toggle.
-                            // But what if they tap Icon? Icon handler is ABOVE.
-                         }
-                         widget.onTap(); 
-                      },
-                      onLongPress: widget.onLongPress,
+                  // PerfectGestureDetector: distinguishes tap vs long-press vs drag
+                  child: PerfectGestureDetector(
+                    isSelectionMode: widget.isSelectionMode,
+                    isSelected: widget.isSelected,
+                    onTap: widget.onTap,
+                    onLongPress: widget.onLongPress,
+                    // Note: actual drag is handled by LongPressDraggable above
+                    child: AnimatedScale(
+                      scale: scale,
+                      duration: const Duration(milliseconds: 100),
                       child: Container(
                         decoration: showMergeRequest ? BoxDecoration(
                           border: Border.all(color: Colors.blueAccent, width: 4),
@@ -241,31 +270,32 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
           ),
         
         // LAYER 2: The Hamburger Icon (Zone A)
-        // High Priority Listener
+        // ONLY positioned in the corner, NOT filling the entire card
         if (!widget.isSelectionMode)
-        Positioned.fill(
-           child: Align(
-             alignment: _iconAlignment,
-             child: Listener(
-               behavior: HitTestBehavior.translucent, // Ensure it catches events
-               onPointerDown: _showGlideMenu,
-               onPointerMove: _updateGlideMenu,
-               onPointerUp: _endGlideMenu,
-               // Hitbox: 48x48 invisible container with Icon centered
+        Positioned(
+           // Position based on which column we're in
+           right: _iconAlignment == Alignment.bottomRight ? 4 : null,
+           left: _iconAlignment == Alignment.bottomLeft ? 4 : null,
+           bottom: 4,
+           child: Listener(
+             behavior: HitTestBehavior.opaque, // Only catch events in THIS widget's bounds
+             onPointerDown: _showGlideMenu,
+             onPointerMove: _updateGlideMenu,
+             onPointerUp: _endGlideMenu,
+             // Hitbox: 48x48 invisible container with Icon centered
+             child: Container(
+               key: _iconKey,
+               width: 48,
+               height: 48,
+               color: Colors.transparent, // Invisible Hitbox
+               alignment: Alignment.center,
                child: Container(
-                 key: _iconKey,
-                 width: 48,
-                 height: 48,
-                 color: Colors.transparent, // Invisible Hitbox
-                 alignment: Alignment.center,
-                 child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(
-                       color: Colors.black.withOpacity(0.4),
-                       shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.menu, color: Colors.white, size: 16),
-                 ),
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                     color: Colors.black.withOpacity(0.4),
+                     shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.menu, color: Colors.white, size: 16),
                ),
              ),
            ),
