@@ -124,6 +124,7 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
          onShare: () => _handleShare(),
          onArchive: () => widget.onArchive(true),
          onDelete: widget.onDelete,
+         isPinned: item.isPinned,
        );
      } else if (item is Note && item.fileType == 'image') {
        // Active: Image note menu
@@ -133,6 +134,7 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
          onShare: () => _handleShare(),
          onArchive: () => widget.onArchive(true),
          onDelete: widget.onDelete,
+         isPinned: item.isPinned,
        );
      } else {
        // Active: Text note menu
@@ -142,6 +144,7 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
          onShare: () => _handleShare(),
          onArchive: () => widget.onArchive(true),
          onDelete: widget.onDelete,
+         isPinned: (item as Note).isPinned,
        );
      }
      

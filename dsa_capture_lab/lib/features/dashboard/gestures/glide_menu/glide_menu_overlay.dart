@@ -197,13 +197,14 @@ class GlideMenuOverlayState extends State<GlideMenuOverlay>
 
 /// Default menu items factory
 class GlideMenuItems {
-  /// Menu for text notes: [Delete, Archive, Share, Color, Pin]
+  /// Menu for text notes: [Delete, Archive, Share, Color, Pin/Unpin]
   static List<GlideMenuItem> forTextNote({
     required VoidCallback onPin,
     required VoidCallback onColor,
     required VoidCallback onShare,
     required VoidCallback onArchive,
     required VoidCallback onDelete,
+    bool isPinned = false,
   }) {
     return [
       GlideMenuItem(
@@ -231,21 +232,22 @@ class GlideMenuItems {
         onExecute: onColor,
       ),
       GlideMenuItem(
-        label: 'Pin',
-        icon: Icons.push_pin_outlined,
+        label: isPinned ? 'Unpin' : 'Pin',
+        icon: isPinned ? Icons.push_pin : Icons.push_pin_outlined,
         color: Colors.amber.shade600,
         onExecute: onPin,
       ),
     ];
   }
   
-  /// Menu for image notes: [Delete, Archive, Share, Rename, Pin]
+  /// Menu for image notes: [Delete, Archive, Share, Rename, Pin/Unpin]
   static List<GlideMenuItem> forImageNote({
     required VoidCallback onPin,
     required VoidCallback onRename,
     required VoidCallback onShare,
     required VoidCallback onArchive,
     required VoidCallback onDelete,
+    bool isPinned = false,
   }) {
     return [
       GlideMenuItem(
@@ -273,21 +275,22 @@ class GlideMenuItems {
         onExecute: onRename,
       ),
       GlideMenuItem(
-        label: 'Pin',
-        icon: Icons.push_pin_outlined,
+        label: isPinned ? 'Unpin' : 'Pin',
+        icon: isPinned ? Icons.push_pin : Icons.push_pin_outlined,
         color: Colors.amber.shade600,
         onExecute: onPin,
       ),
     ];
   }
   
-  /// Menu for folders: [Delete, Archive, Share, Rename, Pin]
+  /// Menu for folders: [Delete, Archive, Share, Rename, Pin/Unpin]
   static List<GlideMenuItem> forFolder({
     required VoidCallback onPin,
     required VoidCallback onRename,
     required VoidCallback onShare,
     required VoidCallback onArchive,
     required VoidCallback onDelete,
+    bool isPinned = false,
   }) {
     return [
       GlideMenuItem(
@@ -315,8 +318,8 @@ class GlideMenuItems {
         onExecute: onRename,
       ),
       GlideMenuItem(
-        label: 'Pin',
-        icon: Icons.push_pin_outlined,
+        label: isPinned ? 'Unpin' : 'Pin',
+        icon: isPinned ? Icons.push_pin : Icons.push_pin_outlined,
         color: Colors.amber.shade600,
         onExecute: onPin,
       ),
@@ -371,5 +374,6 @@ class GlideMenuItems {
     required VoidCallback onShare,
     required VoidCallback onArchive,
     required VoidCallback onDelete,
-  }) => forTextNote(onPin: onPin, onColor: onColor, onShare: onShare, onArchive: onArchive, onDelete: onDelete);
+    bool isPinned = false,
+  }) => forTextNote(onPin: onPin, onColor: onColor, onShare: onShare, onArchive: onArchive, onDelete: onDelete, isPinned: isPinned);
 }
