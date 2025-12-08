@@ -49,6 +49,20 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
       _draggingId = null;
       _localItems = [];
     }
+    
+    // Watch for pending removal (from move-to-parent or other cross-widget moves)
+    final pendingRemovalKey = ref.watch(pendingRemovalKeyProvider);
+    if (pendingRemovalKey != null) {
+      // Remove item from local list and clear the pending key
+      _localItems.removeWhere((it) {
+        final key = (it is Folder) ? "folder_${it.id}" : "note_${it.id}";
+        return key == pendingRemovalKey;
+      });
+      // Clear the pending key (schedule for after build)
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ref.read(pendingRemovalKeyProvider.notifier).state = null;
+      });
+    }
 
     // Fetch Source of Truth
     final List<dynamic> sourceItems;
@@ -152,6 +166,38 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
            });
         },
         onDragEnd: (details) {
+           final List<dynamic> freshItems;
+           switch (widget.currentFilter) {
+             case DashboardFilter.active:
+               final currentId = ref.read(currentFolderProvider);
+               freshItems = ref.read(activeContentProvider(currentId));
+               break;
+             case DashboardFilter.archived:
+               freshItems = ref.read(archivedContentProvider);
+               break;
+             case DashboardFilter.trash:
+               freshItems = ref.read(trashContentProvider);
+               break;
+           }
+           
+           bool itemWasMoved = true;
+           for (final item in freshItems) {
+              final key = (item is Folder) ? "folder_${item.id}" : "note_${item.id}";
+              if (key == _draggingId) {
+                 itemWasMoved = false;
+                 break;
+              }
+           }
+           
+           if (itemWasMoved) {
+              setState(() {
+                _isDragging = false;
+                _draggingId = null;
+                _localItems = List.from(freshItems);
+              });
+              return;
+           }
+
            setState(() {
              _isDragging = false;
              _draggingId = null;
@@ -195,6 +241,17 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
              // Drag ended: deselect all items, return to normal search bar
              ref.read(selectionControllerProvider).clearSelection();
            }
+        },
+        // When item is moved into a folder, remove it from local list immediately
+        onMoveComplete: (movedItemKey) {
+           setState(() {
+             _localItems.removeWhere((it) {
+               final key = (it is Folder) ? "folder_${it.id}" : "note_${it.id}";
+               return key == movedItemKey;
+             });
+             _isDragging = false;
+             _draggingId = null;
+           });
         },
         onDelete: () => widget.controller.deleteItem(item),
         onArchive: (archive) => widget.controller.archiveItem(item, archive),

@@ -61,7 +61,8 @@ class DashboardController {
   }
 
 
-  Future<void> handleDrop(String incomingKey, dynamic targetItem, String zone, List<dynamic> allItems) async {
+  /// Returns true if a move operation occurred (item left current view)
+  Future<bool> handleDrop(String incomingKey, dynamic targetItem, String zone, List<dynamic> allItems) async {
     final currentId = ref.read(currentFolderProvider);
     
     // Parse Key: "folder_123" -> Type=Folder, ID=123
@@ -76,7 +77,7 @@ class DashboardController {
       return e is Note && e.id == id;
     });
 
-    if (matches.isEmpty) return;
+    if (matches.isEmpty) return false;
     incomingObj = matches.first;
 
     if (zone == 'merge') {
@@ -85,32 +86,27 @@ class DashboardController {
       if (incomingObj is Folder && targetItem is Folder) isSelf = incomingObj.id == targetItem.id;
       if (incomingObj is Note && targetItem is Note) isSelf = incomingObj.id == targetItem.id;
       
-      if (isSelf) return;
+      if (isSelf) return false;
 
       if (targetItem is Folder) {
         // Move into Folder
         if (incomingObj is Note) {
           await _repo.moveNote(incomingObj.id, targetItem.id);
+          return true; // Item moved out of current view
         } else if (incomingObj is Folder) {
           await _repo.moveFolder(incomingObj.id, targetItem.id);
+          return true; // Item moved out of current view
         }
       } else if (targetItem is Note) {
         // File on File -> Create Group
         if (incomingObj is Note) {
           await _mergeItemsIntoFolder(incomingObj.id, targetItem);
+          return true; // Both items moved into new folder
         }
       }
-    } else {
-      // REORDER
-      // If we are using Local State Reordering (Keep Style), the "allItems" passed here 
-      // might already be the reordered list if we update it optimistically?
-      // Actually, if we use OnDragEnd to commit, we don't need to do anything here for reordering
-      // because the list is already reordered in the UI, we just need to save it.
-      
-      // However, if DragTarget 'onAccept' is triggered, it means we dropped ON something.
-      // For Keep style, we drop "in the hole".
-      // We rely on 'onDragEnd' in DashboardContent to commit the final state of the list.
     }
+    // REORDER or no action
+    return false;
   }
 
   Future<void> handleReorder(List<dynamic> items) async {
@@ -397,6 +393,9 @@ class DashboardController {
     } else {
       await _repo.moveNote(id, targetParentId);
     }
+    
+    // Signal immediate removal from grid
+    ref.read(pendingRemovalKeyProvider.notifier).state = incomingKey;
     
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(

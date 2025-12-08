@@ -30,6 +30,9 @@ class DashboardGridItem extends ConsumerStatefulWidget {
   
   // Callback for drag state changes (to hide top bar)
   final void Function(bool isDragging)? onDragStateChanged;
+  
+  // Callback when an item is moved into this item (for immediate local removal)
+  final void Function(String movedItemKey)? onMoveComplete;
 
   const DashboardGridItem({
     super.key,
@@ -47,6 +50,7 @@ class DashboardGridItem extends ConsumerStatefulWidget {
     this.onDragEnd,
     this.onHoverReorder,
     this.onDragStateChanged,
+    this.onMoveComplete,
   });
 
   @override
@@ -227,14 +231,17 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
                    itemKey: incomingKey,
                    targetFolderId: widget.item.id,
                  );
-                 if (!success && mounted) {
-                   ScaffoldMessenger.of(context).showSnackBar(
-                     const SnackBar(
-                       content: Text('Failed to move item to folder'),
-                       duration: Duration(seconds: 2),
-                     ),
-                   );
-                 }
+                  if (!success && mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Failed to move item to folder'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  } else if (success) {
+                    // Notify parent to remove item from local list immediately
+                    widget.onMoveComplete?.call(incomingKey);
+                  }
                } else {
                  // Fallback to original drop handler for reorder
                  widget.onDrop(incomingKey, _hoverState);
