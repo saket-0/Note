@@ -12,12 +12,14 @@ class DashboardContent extends ConsumerStatefulWidget {
   final DashboardFilter currentFilter;
   final DashboardController controller;
   final ViewMode viewMode;
+  final double bottomPadding;
 
   const DashboardContent({
     super.key,
     required this.currentFilter,
     required this.controller,
     required this.viewMode,
+    this.bottomPadding = 0.0,
   });
 
   @override
@@ -160,6 +162,7 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
       return ListView.separated(
         key: PageStorageKey('list_$storageKey'),
         physics: scrollPhysics,
+        padding: EdgeInsets.only(bottom: widget.bottomPadding),
         itemCount: _localItems.length,
         separatorBuilder: (_, __) => const SizedBox(height: 12),
         itemBuilder: (context, index) => _buildItem(index, _localItems),
@@ -169,6 +172,7 @@ class _DashboardContentState extends ConsumerState<DashboardContent> {
     return MasonryGridView.count(
       key: PageStorageKey('grid_$storageKey'),
       physics: scrollPhysics,
+      padding: EdgeInsets.only(bottom: widget.bottomPadding),
       crossAxisCount: 2,
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,

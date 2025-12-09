@@ -136,10 +136,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   child: Padding(
                     padding: const EdgeInsets.all(12.0),
                     // DashboardContent now fetches items directly from provider
+                    // Add bottom padding when FABs are visible to prevent obstruction
                     child: DashboardContent(
                       currentFilter: currentFilter,
                       controller: controller,
                       viewMode: viewMode,
+                      bottomPadding: (currentFilter == DashboardFilter.active && !isSelectionMode) 
+                          ? 150.0  // FAB stack height: 2 FABs (56*2) + spacing (16) + margin (16) ≈ 150
+                          : 0.0,
                     ),
                   ),
                 ),
