@@ -207,6 +207,7 @@ class _DashboardContentState extends ConsumerState<DashboardContent>
       crossAxisCount: 2,
       mainAxisSpacing: 12,
       crossAxisSpacing: 12,
+      cacheExtent: 500, // Pre-build 500px of off-screen items for smoother scroll
       itemCount: _localItems.length,
       itemBuilder: (context, index) => _buildItem(index, _localItems),
     );
