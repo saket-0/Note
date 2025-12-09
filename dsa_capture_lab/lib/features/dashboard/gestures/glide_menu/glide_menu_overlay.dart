@@ -132,20 +132,30 @@ class GlideMenuOverlayState extends State<GlideMenuOverlay>
       setState(() => _highlightedIndex = index);
       if (index >= 0 && index < items.length) {
         HapticFeedback.selectionClick();
+        // DEBUG: Which item is highlighted
+        final orderedItems = _isDownwardMode ? items.reversed.toList() : items;
+        if (index < orderedItems.length) {
+          debugPrint('[GlideMenu] Highlight: index=$index, label=${orderedItems[index].label}, downward=$_isDownwardMode');
+        }
       }
     }
   }
   
   /// Execute highlighted action and close
   void executeAndClose() {
+    debugPrint('[GlideMenu] executeAndClose: highlightedIndex=$_highlightedIndex, downward=$_isDownwardMode');
     if (_highlightedIndex != null && 
         _highlightedIndex! >= 0 && 
         _highlightedIndex! < widget.items.length) {
-      // In downward mode, items are reversed, so we need to map back to original index
-      final actualIndex = _isDownwardMode 
-          ? widget.items.length - 1 - _highlightedIndex! 
-          : _highlightedIndex!;
-      widget.items[actualIndex].onExecute();
+      // Get the items in the same order they are rendered
+      // In downward mode, orderedItems is already reversed, and _highlightedIndex
+      // is set based on that order, so we use orderedItems directly
+      final orderedItems = _isDownwardMode ? widget.items.reversed.toList() : widget.items;
+      final selected = orderedItems[_highlightedIndex!];
+      debugPrint('[GlideMenu] Executing: ${selected.label}');
+      selected.onExecute();
+    } else {
+      debugPrint('[GlideMenu] No valid selection to execute');
     }
     _close();
   }
