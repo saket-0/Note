@@ -37,8 +37,8 @@ class HardwareCacheEngine {
   // CRITICAL: ImageProvider memory cache - NEVER cleared except on memory warning
   final Map<String, ImageProvider> _memoryCache = {};
   
-  // LRU tracking (respect global imageCache limits, we use 2000)
-  static const int _maxCacheSize = 2000;
+  // LRU tracking (V5: 5000 images for flagship devices)
+  static const int _maxCacheSize = 5000;
   final LinkedHashMap<String, DateTime> _accessOrder = LinkedHashMap();
   
   // Yield-based loading queue
@@ -154,6 +154,33 @@ class HardwareCacheEngine {
     }
     _startProcessing();
   }
+  
+  /// V5: Scroll-Idle Pre-Fetch
+  /// Called when scroll stops - preload next 50 images
+  /// This creates the "warm-start" effect where images appear instantly when scrolling resumes
+  void onScrollIdle(int currentVisibleIndex, List<String> allFolderPaths) {
+    if (allFolderPaths.isEmpty) return;
+    
+    final startIdx = currentVisibleIndex;
+    final endIdx = (startIdx + 50).clamp(0, allFolderPaths.length);
+    
+    int added = 0;
+    for (int i = startIdx; i < endIdx; i++) {
+      final path = allFolderPaths[i];
+      if (!_memoryCache.containsKey(path) && !_loadQueue.contains(path)) {
+        _loadQueue.add(path);
+        added++;
+      }
+    }
+    
+    if (added > 0) {
+      debugPrint('[HardwareCacheEngine] Scroll-idle prefetch: queued $added images');
+      _startProcessing();
+    }
+  }
+  
+  /// Get all image paths currently in queue (for debugging)
+  int get queueLength => _loadQueue.length;
   
   // === INTERNAL ===
   

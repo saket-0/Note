@@ -23,12 +23,12 @@ class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
   void initState() {
     super.initState();
     
-    // === RAM "OVERCLOCKING" - Hardware Aggressive ===
-    // Unlock Flutter's default image cache limits
-    // Must be done BEFORE any image loading
+    // === V5: RAM "UNLEASHED" - Flagship Tier (8GB+ RAM) ===
+    // Unlock Flutter's default image cache limits for maximum performance
+    // largeHeap enabled in AndroidManifest.xml allows 1GB+ allocation
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      PaintingBinding.instance.imageCache.maximumSizeBytes = 1024 * 1024 * 500; // 500MB
-      PaintingBinding.instance.imageCache.maximumSize = 2000; // 2000 images
+      PaintingBinding.instance.imageCache.maximumSizeBytes = 1024 * 1024 * 1024; // 1GB
+      PaintingBinding.instance.imageCache.maximumSize = 5000; // 5000 images
     });
     
     // Initialize DataRepository (loads cache from DB)
