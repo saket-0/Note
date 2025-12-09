@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/ui/gradient_background.dart';
 import '../../core/ui/page_routes.dart';
+import '../../shared/services/smart_cache_engine.dart';
 import '../camera/camera_screen.dart';
 import '../editor/editor_screen.dart';
 import 'controllers/dashboard_controller.dart';
@@ -25,6 +26,11 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   
   @override
   Widget build(BuildContext context) {
+    // SmartCacheEngine - "set it and forget it" background watcher
+    // Automatically caches images based on navigation state:
+    // Priority 1: Current folder, Priority 2: Parent, Priority 3: Subfolders
+    ref.watch(smartCacheEngineProvider(context));
+
     final currentFolderId = ref.watch(currentFolderProvider);
     final currentFilter = ref.watch(activeFilterProvider);
     final viewMode = ref.watch(viewModeProvider);
