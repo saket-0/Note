@@ -77,17 +77,27 @@ class _StableImageState extends ConsumerState<StableImage> {
 
   @override
   Widget build(BuildContext context) {
-    final engine = ref.watch(hardwareCacheEngineProvider);
+    final engine = ref.read(hardwareCacheEngineProvider); // V7: Use read, not watch
     
     // V6: Get file type for overlay support
     final fileType = engine.getFileType(widget.path);
     
-    // SYNCHRONOUS: Always check cache first in build (survives parent rebuilds)
-    final cachedProvider = engine.getProvider(widget.path);
-    if (cachedProvider != null) {
-      _cachedProvider = cachedProvider;
-    } else if (!_hasPrioritized) {
-      // Prioritize if not cached and not already prioritized
+    // === V7: EARLY RETURN LOCK ===
+    // Step 1: Check Memory (Instant, synchronous)
+    final cached = engine.getProvider(widget.path);
+    
+    // Step 2: If cached - LOCK & RETURN (Stop Listening)
+    // This disconnects cached images from rebuild storms: 0% CPU during scroll
+    if (cached != null) {
+      _cachedProvider = cached;
+      return RepaintBoundary(
+        child: _buildContent(fileType, provider: cached),
+      );
+    }
+    
+    // Step 3: Only Listen if NOT Cached
+    // Prioritize loading if not already done
+    if (!_hasPrioritized) {
       _hasPrioritized = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -96,7 +106,7 @@ class _StableImageState extends ConsumerState<StableImage> {
       });
     }
     
-    // Listen for cache updates (for images not yet cached)
+    // Only uncached images subscribe to updates
     return ValueListenableBuilder<int>(
       valueListenable: engine.cacheUpdateNotifier,
       builder: (context, _, child) {
@@ -108,17 +118,21 @@ class _StableImageState extends ConsumerState<StableImage> {
         
         // CRITICAL: RepaintBoundary isolates image painting
         return RepaintBoundary(
-          child: _buildContent(fileType),
+          child: _buildContent(fileType, provider: provider),
         );
       },
     );
   }
   
-  /// V6: Build content based on file type
-  Widget _buildContent(FileType fileType) {
-    // If cached, show the image (with overlay if video/pdf)
-    if (_cachedProvider != null) {
-      final imageWidget = _buildImage(_cachedProvider!);
+  /// V7: Build content based on file type
+  /// [provider] is passed directly to avoid redundant cache lookups
+  Widget _buildContent(FileType fileType, {ImageProvider? provider}) {
+    // V7: Use passed provider or fall back to cached
+    final imageProvider = provider ?? _cachedProvider;
+    
+    // If we have a provider, show the image (with overlay if video/pdf)
+    if (imageProvider != null) {
+      final imageWidget = _buildImage(imageProvider);
       
       // V6: Add overlay for video files (play button)
       if (fileType == FileType.video) {

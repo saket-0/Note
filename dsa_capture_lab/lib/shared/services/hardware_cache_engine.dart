@@ -221,6 +221,56 @@ class HardwareCacheEngine with WidgetsBindingObserver {
     _startProcessing();
   }
   
+  /// V7: Predictive Prefetch - call on onTapDown for ~100ms head-start
+  /// Loads first 10 items of target folder at HIGH PRIORITY before navigation
+  void prefetchFolder(int? folderId) {
+    final repo = _ref.read(dataRepositoryProvider);
+    final notes = repo.getNotesForFolder(folderId);
+    
+    // Get first 10 items (typical above-fold content)
+    final firstNotes = notes.take(10);
+    
+    // Collect paths that need loading
+    final pathsToLoad = <String>[];
+    for (final note in firstNotes) {
+      if (note.imagePath != null && 
+          note.imagePath!.isNotEmpty && 
+          !_memoryCache.containsKey(note.imagePath!)) {
+        pathsToLoad.add(note.imagePath!);
+        _pathToFolderId[note.imagePath!] = folderId;
+      }
+      for (final img in note.images) {
+        if (!_memoryCache.containsKey(img)) {
+          pathsToLoad.add(img);
+          _pathToFolderId[img] = folderId;
+        }
+      }
+    }
+    
+    if (pathsToLoad.isEmpty) return;
+    
+    // HIGH PRIORITY: Prepend to queue (before any background work)
+    final existingQueue = _loadQueue.toList();
+    _loadQueue.clear();
+    
+    // Add new items first (high priority)
+    for (final path in pathsToLoad) {
+      if (!_loadQueue.contains(path)) {
+        _loadQueue.add(path);
+      }
+    }
+    
+    // Add back existing items
+    for (final path in existingQueue) {
+      if (!_loadQueue.contains(path)) {
+        _loadQueue.add(path);
+      }
+    }
+    
+    debugPrint('[HardwareCacheEngine] V7 Predictive prefetch: queued ${pathsToLoad.length} images for folder $folderId');
+    _startProcessing();
+  }
+  
   /// V5: Scroll-Idle Pre-Fetch
   /// Called when scroll stops - preload next 50 images
   /// This creates the "warm-start" effect where images appear instantly when scrolling resumes
