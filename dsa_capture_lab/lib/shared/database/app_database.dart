@@ -185,12 +185,14 @@ class AppDatabase {
     await db.update('folders', {'position': newPosition}, where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<int> deleteFolder(int id, {bool permanent = false}) async {
+  Future<int> deleteFolder(int id, {bool permanent = false, bool unpin = false}) async {
     final db = await database;
     if (permanent) {
       return await db.delete('folders', where: 'id = ?', whereArgs: [id]);
     } else {
-      return await db.update('folders', {'is_deleted': 1}, where: 'id = ?', whereArgs: [id]);
+      final updates = <String, dynamic>{'is_deleted': 1};
+      if (unpin) updates['is_pinned'] = 0;
+      return await db.update('folders', updates, where: 'id = ?', whereArgs: [id]);
     }
   }
 
@@ -290,30 +292,38 @@ class AppDatabase {
     await db.update('notes', {'position': newPosition}, where: 'id = ?', whereArgs: [id]);
   }
 
-  Future<int> moveNote(int noteId, int? targetFolderId, {int? newPosition}) async {
+  Future<int> moveNote(int noteId, int? targetFolderId, {int? newPosition, bool unpin = false}) async {
     final db = await database;
     final updates = <String, Object?>{'folder_id': targetFolderId};
     if (newPosition != null) {
       updates['position'] = newPosition;
     }
+    if (unpin) {
+      updates['is_pinned'] = 0;
+    }
     return await db.update('notes', updates, where: 'id = ?', whereArgs: [noteId]);
   }
 
-  Future<int> moveFolder(int folderId, int? targetParentId, {int? newPosition}) async {
+  Future<int> moveFolder(int folderId, int? targetParentId, {int? newPosition, bool unpin = false}) async {
     final db = await database;
     final updates = <String, Object?>{'parent_id': targetParentId};
     if (newPosition != null) {
       updates['position'] = newPosition;
     }
+    if (unpin) {
+      updates['is_pinned'] = 0;
+    }
     return await db.update('folders', updates, where: 'id = ?', whereArgs: [folderId]);
   }
 
-  Future<int> deleteNote(int id, {bool permanent = false}) async {
+  Future<int> deleteNote(int id, {bool permanent = false, bool unpin = false}) async {
     final db = await database;
     if (permanent) {
       return await db.delete('notes', where: 'id = ?', whereArgs: [id]);
     } else {
-      return await db.update('notes', {'is_deleted': 1}, where: 'id = ?', whereArgs: [id]);
+      final updates = <String, dynamic>{'is_deleted': 1};
+      if (unpin) updates['is_pinned'] = 0;
+      return await db.update('notes', updates, where: 'id = ?', whereArgs: [id]);
     }
   }
 
@@ -321,10 +331,12 @@ class AppDatabase {
   // STATE OPERATIONS (Archive/Restore/Trash)
   // ===========================================
 
-  Future<void> archiveItem(int id, String type, bool archive) async {
+  Future<void> archiveItem(int id, String type, bool archive, {bool unpin = false}) async {
     final db = await database;
     final table = type == 'folder' ? 'folders' : 'notes';
-    await db.update(table, {'is_archived': archive ? 1 : 0}, where: 'id = ?', whereArgs: [id]);
+    final updates = <String, dynamic>{'is_archived': archive ? 1 : 0};
+    if (unpin) updates['is_pinned'] = 0;
+    await db.update(table, updates, where: 'id = ?', whereArgs: [id]);
   }
 
   Future<void> restoreItem(int id, String type) async {

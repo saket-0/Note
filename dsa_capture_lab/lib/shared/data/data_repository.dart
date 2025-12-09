@@ -320,17 +320,17 @@ class DataRepository {
     if (permanent) {
       _removeNoteFromCache(id);
     } else {
-      // Move to trash
+      // Move to trash - also unpin the item
       final note = findNote(id);
       if (note != null) {
         _removeNoteFromCache(id);
-        _trashedItems.add(note.copyWith(isDeleted: true));
+        _trashedItems.add(note.copyWith(isDeleted: true, isPinned: false));
       }
     }
     _notifyChange();
     
     if (id > 0) {
-      await _db.deleteNote(id, permanent: permanent);
+      await _db.deleteNote(id, permanent: permanent, unpin: !permanent);
     }
   }
 
@@ -339,39 +339,43 @@ class DataRepository {
     if (permanent) {
       _removeFolderFromCache(id);
     } else {
+      // Move to trash - also unpin the item
       final folder = findFolder(id);
       if (folder != null) {
         _removeFolderFromCache(id);
-        _trashedItems.add(folder.copyWith(isDeleted: true));
+        _trashedItems.add(folder.copyWith(isDeleted: true, isPinned: false));
       }
     }
     _notifyChange();
     
     if (id > 0) {
-      await _db.deleteFolder(id, permanent: permanent);
+      await _db.deleteFolder(id, permanent: permanent, unpin: !permanent);
     }
   }
 
   /// Archive item (cache-first)
+  /// When archiving, also unpins the item so it doesn't reappear as pinned on restore.
   Future<void> archiveItem(dynamic item, bool archive) async {
     if (item is Folder) {
       _removeFolderFromCache(item.id);
       if (archive) {
-        _archivedItems.add(item.copyWith(isArchived: true, isDeleted: false));
+        // Unpin when archiving
+        _archivedItems.add(item.copyWith(isArchived: true, isDeleted: false, isPinned: false));
       } else {
         _addFolderToCache(item.copyWith(isArchived: false, isDeleted: false));
       }
       _notifyChange();
-      if (item.id > 0) await _db.archiveItem(item.id, 'folder', archive);
+      if (item.id > 0) await _db.archiveItem(item.id, 'folder', archive, unpin: archive);
     } else if (item is Note) {
       _removeNoteFromCache(item.id);
       if (archive) {
-        _archivedItems.add(item.copyWith(isArchived: true, isDeleted: false));
+        // Unpin when archiving
+        _archivedItems.add(item.copyWith(isArchived: true, isDeleted: false, isPinned: false));
       } else {
         _addNoteToCache(item.copyWith(isArchived: false, isDeleted: false));
       }
       _notifyChange();
-      if (item.id > 0) await _db.archiveItem(item.id, 'note', archive);
+      if (item.id > 0) await _db.archiveItem(item.id, 'note', archive, unpin: archive);
     }
   }
 
@@ -392,6 +396,7 @@ class DataRepository {
   }
 
   /// Move note to folder (cache-first)
+  /// When moving to a different folder, the item is automatically unpinned.
   Future<void> moveNote(int noteId, int? targetFolderId) async {
     final note = findNote(noteId);
     if (note != null) {
@@ -399,19 +404,21 @@ class DataRepository {
       final activeItems = getActiveContent(targetFolderId);
       final newPos = LayoutService.getMoveToTopPosition(activeItems);
 
+      // Unpin when moving to a different folder
       final updatedNote = note.copyWith(
         folderId: targetFolderId,
         position: newPos,
+        isPinned: false,
       );
 
       _removeNoteFromCache(noteId);
       _addNoteToCache(updatedNote);
       _notifyChange();
 
-      // Update full note to persist folderId and position
+      // Update full note to persist folderId, position, and isPinned
       if (noteId > 0) {
         try {
-          await _db.moveNote(noteId, targetFolderId, newPosition: newPos);
+          await _db.moveNote(noteId, targetFolderId, newPosition: newPos, unpin: true);
         } catch (e) {
           // Error moving note in DB - cache already updated optimistically
         }
@@ -421,6 +428,7 @@ class DataRepository {
 
 
   /// Move folder to parent (cache-first)
+  /// When moving to a different parent, the folder is automatically unpinned.
   Future<void> moveFolder(int folderId, int? targetParentId) async {
     final folder = findFolder(folderId);
     if (folder != null) {
@@ -428,9 +436,11 @@ class DataRepository {
       final activeItems = getActiveContent(targetParentId);
       final newPos = LayoutService.getMoveToTopPosition(activeItems);
 
+      // Unpin when moving to a different folder
       final updatedFolder = folder.copyWith(
         parentId: targetParentId,
         position: newPos,
+        isPinned: false,
       );
 
       _removeFolderFromCache(folderId);
@@ -439,7 +449,7 @@ class DataRepository {
 
       if (folderId > 0) {
         try {
-          await _db.moveFolder(folderId, targetParentId, newPosition: newPos);
+          await _db.moveFolder(folderId, targetParentId, newPosition: newPos, unpin: true);
         } catch (e) {
           print('Error moving folder: $e');
         }

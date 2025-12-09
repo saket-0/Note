@@ -26,13 +26,44 @@ class DashboardContent extends ConsumerStatefulWidget {
   ConsumerState<DashboardContent> createState() => _DashboardContentState();
 }
 
-class _DashboardContentState extends ConsumerState<DashboardContent> {
+class _DashboardContentState extends ConsumerState<DashboardContent> 
+    with WidgetsBindingObserver {
   // Local state for optimistic reordering (The "Visual Order")
   List<dynamic> _localItems = [];
   bool _isDragging = false;
   String? _draggingId; // "note_123" or "folder_456"
   int? _lastFolderId;
   DashboardFilter? _lastFilter; // Track filter to detect changes
+
+  @override
+  void initState() {
+    super.initState();
+    // Register lifecycle observer
+    WidgetsBinding.instance.addObserver(this);
+    // Reset glide menu state on widget initialization (prevents stuck scroll)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref.read(isGlideMenuOpenProvider.notifier).state = false;
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    // Unregister lifecycle observer
+    WidgetsBinding.instance.removeObserver(this);
+    // Reset glide menu state on dispose (prevents stuck scroll)
+    ref.read(isGlideMenuOpenProvider.notifier).state = false;
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Reset glide menu state when app resumes (prevents stuck scroll after multitasking)
+    if (state == AppLifecycleState.resumed) {
+      ref.read(isGlideMenuOpenProvider.notifier).state = false;
+    }
+  }
 
   @override
   void didUpdateWidget(DashboardContent oldWidget) {
