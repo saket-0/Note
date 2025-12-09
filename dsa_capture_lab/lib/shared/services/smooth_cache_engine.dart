@@ -1,20 +1,20 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/data_repository.dart';
 import '../../features/dashboard/providers/dashboard_state.dart';
 
-/// SmoothCacheEngine - V3 "Smooth-Stream" Architecture
-/// 
-/// Design: Non-blocking, yield-based loading that respects UI frame budget.
+/// SmoothCacheEngine V3.1 - With Write-Through Caching & Ancestral Pinning
 /// 
 /// Features:
 /// - **Yield-based scheduler**: 1 image → yield → next (60fps friendly)
+/// - **Write-through cache**: Inject memory data directly (no disk read)
+/// - **Ancestral pinning**: Never evict parent folder images
 /// - **ImageProvider cache**: Reuse hydrated streams, no re-decoding
 /// - **Predictive pre-load**: Subfolders loaded on idle
-/// - **LRU eviction**: Bounded memory growth
 class SmoothCacheEngine {
   final Ref _ref;
   final BuildContext _context;
@@ -22,12 +22,17 @@ class SmoothCacheEngine {
   // Job versioning for cancellation
   int _currentJobVersion = 0;
   
+  // Ancestor folder hierarchy for pinning (current + all parents)
+  final Set<int?> _ancestorFolderIds = {};
+  
+  // Mapping: image path -> folder ID it belongs to
+  final Map<String, int?> _pathToFolderId = {};
+  
   // Yield-based loading queue
   final Queue<String> _loadQueue = Queue();
   bool _isProcessing = false;
   
   // CRITICAL: ImageProvider memory cache
-  // Stores hydrated FileImage instances for instant reuse
   final Map<String, ImageProvider> _providerCache = {};
   
   // LRU tracking
@@ -43,6 +48,7 @@ class SmoothCacheEngine {
     });
     
     // Start loading root folder
+    _updateAncestorHierarchy(null);
     _queueFolderImages(null);
     _startProcessing();
   }
@@ -60,6 +66,33 @@ class SmoothCacheEngine {
   
   /// Check if path is cached
   bool isCached(String path) => _providerCache.containsKey(path);
+  
+  /// WRITE-THROUGH: Inject image data directly from memory
+  /// Call this during batch save to avoid disk reads
+  void injectMemoryCache(String path, Uint8List data, {int? folderId}) {
+    final provider = MemoryImage(data);
+    _providerCache[path] = provider;
+    _trackAccess(path);
+    
+    if (folderId != null) {
+      _pathToFolderId[path] = folderId;
+    }
+    
+    // Notify listeners immediately
+    cacheUpdateNotifier.value++;
+  }
+  
+  /// WRITE-THROUGH: Inject an already-created ImageProvider
+  void injectProvider(String path, ImageProvider provider, {int? folderId}) {
+    _providerCache[path] = provider;
+    _trackAccess(path);
+    
+    if (folderId != null) {
+      _pathToFolderId[path] = folderId;
+    }
+    
+    cacheUpdateNotifier.value++;
+  }
   
   /// Prioritize loading a specific path (for on-screen items)
   void prioritize(String path) {
@@ -81,13 +114,36 @@ class SmoothCacheEngine {
   void _onFolderChanged(int? newFolderId) {
     _currentJobVersion++;
     
+    // Update ancestor hierarchy for pinning
+    _updateAncestorHierarchy(newFolderId);
+    
     // Clear queue and reload for new folder
     _loadQueue.clear();
     _queueFolderImages(newFolderId);
     _startProcessing();
     
-    // Schedule background pre-load for subfolders after current folder is done
+    // Schedule background pre-load
     _scheduleSubfolderPreload(newFolderId);
+  }
+  
+  /// Build the ancestor hierarchy for pinning
+  void _updateAncestorHierarchy(int? folderId) {
+    _ancestorFolderIds.clear();
+    _ancestorFolderIds.add(folderId); // Current folder
+    
+    if (folderId == null) return;
+    
+    final repo = _ref.read(dataRepositoryProvider);
+    int? currentId = folderId;
+    
+    // Walk up the tree
+    while (currentId != null) {
+      final folder = repo.findFolder(currentId);
+      if (folder == null) break;
+      
+      _ancestorFolderIds.add(folder.parentId);
+      currentId = folder.parentId;
+    }
   }
   
   void _queueFolderImages(int? folderId) {
@@ -96,11 +152,13 @@ class SmoothCacheEngine {
     
     for (final note in notes) {
       for (final imagePath in note.images) {
+        _pathToFolderId[imagePath] = folderId;
         if (!_providerCache.containsKey(imagePath)) {
           _loadQueue.add(imagePath);
         }
       }
       if (note.imagePath != null && note.imagePath!.isNotEmpty) {
+        _pathToFolderId[note.imagePath!] = folderId;
         if (!_providerCache.containsKey(note.imagePath!)) {
           _loadQueue.add(note.imagePath!);
         }
@@ -111,20 +169,19 @@ class SmoothCacheEngine {
   void _scheduleSubfolderPreload(int? currentFolderId) {
     final version = _currentJobVersion;
     
-    // Wait for current folder to finish loading
     Future.delayed(const Duration(milliseconds: 500), () {
       if (version != _currentJobVersion) return;
       if (!_context.mounted) return;
       
       final repo = _ref.read(dataRepositoryProvider);
       
-      // Parent folder
+      // Parent folder (IMPORTANT: pre-load for back navigation)
       if (currentFolderId != null) {
         final folder = repo.findFolder(currentFolderId);
         if (folder != null) {
           final parentNotes = repo.getNotesForFolder(folder.parentId);
-          for (final note in parentNotes.take(5)) {
-            _addToQueueIfNeeded(note);
+          for (final note in parentNotes) {
+            _addToQueueIfNeeded(note, folder.parentId);
           }
         }
       }
@@ -134,7 +191,7 @@ class SmoothCacheEngine {
       for (final subfolderId in subfolderIds) {
         final subNotes = repo.getNotesForFolder(subfolderId);
         for (final note in subNotes.take(5)) {
-          _addToQueueIfNeeded(note);
+          _addToQueueIfNeeded(note, subfolderId);
         }
       }
       
@@ -142,21 +199,21 @@ class SmoothCacheEngine {
     });
   }
   
-  void _addToQueueIfNeeded(Note note) {
+  void _addToQueueIfNeeded(Note note, int? folderId) {
     for (final imagePath in note.images) {
+      _pathToFolderId[imagePath] = folderId;
       if (!_providerCache.containsKey(imagePath) && !_loadQueue.contains(imagePath)) {
         _loadQueue.add(imagePath);
       }
     }
     if (note.imagePath != null && note.imagePath!.isNotEmpty) {
+      _pathToFolderId[note.imagePath!] = folderId;
       if (!_providerCache.containsKey(note.imagePath!) && !_loadQueue.contains(note.imagePath!)) {
         _loadQueue.add(note.imagePath!);
       }
     }
   }
   
-  /// YIELD-BASED CHAIN LOADER
-  /// Processes 1 item at a time, yielding to UI between each
   void _startProcessing() {
     if (_isProcessing) return;
     _isProcessing = true;
@@ -176,21 +233,14 @@ class SmoothCacheEngine {
     
     final path = _loadQueue.removeFirst();
     
-    // Skip if already cached
     if (_providerCache.containsKey(path)) {
-      // Yield to UI, then continue
       await Future.delayed(Duration.zero);
       _processNextItem();
       return;
     }
     
-    // Load single image
     await _loadImage(path);
-    
-    // CRITICAL: Yield to UI thread (frame budget respect)
     await Future.delayed(Duration.zero);
-    
-    // Continue chain
     _processNextItem();
   }
   
@@ -199,7 +249,6 @@ class SmoothCacheEngine {
       final file = File(path);
       if (!await file.exists()) return;
       
-      // Create and cache the ImageProvider
       final provider = ResizeImage(
         FileImage(file),
         width: 400,
@@ -207,14 +256,11 @@ class SmoothCacheEngine {
       
       if (!_context.mounted) return;
       
-      // Precache to decode the image
       await precacheImage(provider, _context);
       
-      // Store in memory cache
       _providerCache[path] = provider;
       _trackAccess(path);
       
-      // Notify listeners
       cacheUpdateNotifier.value++;
     } catch (e) {
       // Silently ignore failures
@@ -225,11 +271,29 @@ class SmoothCacheEngine {
     _accessOrder.remove(path);
     _accessOrder[path] = DateTime.now();
     
-    // LRU eviction
+    // ANCESTRAL PINNING: Only evict non-ancestor images
     while (_accessOrder.length > _maxCacheSize) {
-      final oldest = _accessOrder.keys.first;
-      _accessOrder.remove(oldest);
-      _providerCache.remove(oldest);
+      String? evictCandidate;
+      
+      // Find first non-ancestor image to evict
+      for (final candidatePath in _accessOrder.keys) {
+        final folderId = _pathToFolderId[candidatePath];
+        
+        // NEVER evict images from ancestor folders
+        if (!_ancestorFolderIds.contains(folderId)) {
+          evictCandidate = candidatePath;
+          break;
+        }
+      }
+      
+      if (evictCandidate == null) {
+        // All images are from ancestor folders, can't evict
+        break;
+      }
+      
+      _accessOrder.remove(evictCandidate);
+      _providerCache.remove(evictCandidate);
+      _pathToFolderId.remove(evictCandidate);
     }
   }
   
@@ -238,8 +302,11 @@ class SmoothCacheEngine {
   }
 }
 
-/// Provider for SmoothCacheEngine
+/// Provider for SmoothCacheEngine with keepAlive for session persistence
 final smoothCacheEngineProvider = Provider.family<SmoothCacheEngine, BuildContext>((ref, context) {
+  // KEEP ALIVE: Cache persists for entire app session
+  ref.keepAlive();
+  
   final engine = SmoothCacheEngine(ref, context);
   
   ref.onDispose(() {

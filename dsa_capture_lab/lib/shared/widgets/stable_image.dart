@@ -1,15 +1,16 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../services/smooth_cache_engine.dart';
+import '../services/hardware_cache_engine.dart';
 
-/// StableImage - V3 "Smooth-Stream" Widget
+/// StableImage - V4 "Hardware-Native" Widget
 /// 
 /// Features:
 /// - **RepaintBoundary**: Isolates painting from layout (kills drag jitter)
 /// - **Synchronous lookup**: Uses cached ImageProvider immediately
 /// - **Gapless playback**: Holds old texture during transitions
 /// - **ValueKey enforcement**: Uses fileId for stable identity
+/// - **No BuildContext dependency**: Uses singleton HardwareCacheEngine
 class StableImage extends ConsumerStatefulWidget {
   /// Unique identifier for this image (used for ValueKey)
   final String fileId;
@@ -61,7 +62,7 @@ class _StableImageState extends ConsumerState<StableImage> {
   }
 
   void _checkCache() {
-    final engine = ref.read(smoothCacheEngineProvider(context));
+    final engine = ref.read(hardwareCacheEngineProvider);
     final provider = engine.getProvider(widget.path);
     if (provider != null && _cachedProvider != provider) {
       setState(() {
@@ -75,20 +76,33 @@ class _StableImageState extends ConsumerState<StableImage> {
 
   @override
   Widget build(BuildContext context) {
-    final engine = ref.watch(smoothCacheEngineProvider(context));
+    final engine = ref.watch(hardwareCacheEngineProvider);
     
-    // Listen for cache updates
+    // SYNCHRONOUS: Always check cache first in build (survives parent rebuilds)
+    final cachedProvider = engine.getProvider(widget.path);
+    if (cachedProvider != null) {
+      _cachedProvider = cachedProvider;
+    } else if (!_hasPrioritized) {
+      // Prioritize if not cached and not already prioritized
+      _hasPrioritized = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          engine.prioritize(widget.path);
+        }
+      });
+    }
+    
+    // Listen for cache updates (for images not yet cached)
     return ValueListenableBuilder<int>(
       valueListenable: engine.cacheUpdateNotifier,
       builder: (context, _, child) {
-        // Check if our image is now cached
+        // Check again in case cache was updated
         final provider = engine.getProvider(widget.path);
         if (provider != null) {
           _cachedProvider = provider;
         }
         
         // CRITICAL: RepaintBoundary isolates image painting
-        // This stops the drag-and-drop system from asking for repaints
         return RepaintBoundary(
           child: _cachedProvider != null 
               ? _buildImage(_cachedProvider!)

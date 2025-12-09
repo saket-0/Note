@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'features/dashboard/dashboard_screen.dart';
 import 'shared/data/data_repository.dart';
+import 'shared/services/hardware_cache_engine.dart';
 
 void main() {
   runApp(const ProviderScope(child: DsaCaptureApp()));
@@ -21,9 +22,21 @@ class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
   @override
   void initState() {
     super.initState();
+    
+    // === RAM "OVERCLOCKING" - Hardware Aggressive ===
+    // Unlock Flutter's default image cache limits
+    // Must be done BEFORE any image loading
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      PaintingBinding.instance.imageCache.maximumSizeBytes = 1024 * 1024 * 500; // 500MB
+      PaintingBinding.instance.imageCache.maximumSize = 2000; // 2000 images
+    });
+    
     // Initialize DataRepository (loads cache from DB)
     final repo = ref.read(dataRepositoryProvider);
-    _initFuture = repo.initialize();
+    _initFuture = repo.initialize().then((_) {
+      // Pre-warm Root folder cache after repo is ready
+      ref.read(hardwareCacheEngineProvider).preWarmFolders([null]); // null = root
+    });
   }
 
   @override

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../dashboard/providers/dashboard_state.dart';
 import '../../../shared/data/data_repository.dart';
 import '../../../shared/domain/entities/entities.dart';
+import '../../../shared/services/hardware_cache_engine.dart';
 import '../models/batch_camera_state.dart';
 export '../models/batch_camera_state.dart';
 
@@ -18,6 +19,7 @@ class CameraViewModel extends StateNotifier<BatchCameraState> {
   CameraViewModel(this.ref) : super(BatchCameraState(isBatchMode: false, capturedItems: []));
 
   DataRepository get _repo => ref.read(dataRepositoryProvider);
+  HardwareCacheEngine get _cacheEngine => ref.read(hardwareCacheEngineProvider);
 
   void toggleMode(bool isBatch) {
     state = state.copyWith(isBatchMode: isBatch);
@@ -35,7 +37,7 @@ class CameraViewModel extends StateNotifier<BatchCameraState> {
       state = state.copyWith(activeBatchFolderId: newFolderId);
   }
 
-  // Instant Batch Save - OPTIMISTIC via DataRepository
+  // Instant Batch Save - OPTIMISTIC via DataRepository with CACHE PATCHING
   Future<void> captureBatchPhoto(String path, int? parentFolderId) async {
     // 1. Ensure Batch Folder Exists (Atomic Check)
     if (state.activeBatchFolderId == null) {
@@ -50,6 +52,15 @@ class CameraViewModel extends StateNotifier<BatchCameraState> {
     
     // Safety check
     if (state.activeBatchFolderId == null) return;
+
+    // === CACHE PATCHING: Inject image BEFORE UI rebuild ===
+    // This ensures 0ms delay when user navigates to the batch folder
+    try {
+      final bytes = await File(path).readAsBytes();
+      _cacheEngine.patchCache(path, bytes, folderId: state.activeBatchFolderId);
+    } catch (e) {
+      // Non-fatal: image will load normally if patching fails
+    }
 
     // 2. Create Note via repository (optimistic)
     final noteId = await _repo.createNote(
@@ -105,8 +116,16 @@ class CameraViewModel extends StateNotifier<BatchCameraState> {
     state = state.copyWith(capturedItems: [], activeBatchFolderId: null);
   }
 
-  // Single Save helper - OPTIMISTIC via DataRepository
+  // Single Save helper - OPTIMISTIC via DataRepository with CACHE PATCHING
   Future<int> saveSingle(String path, int? folderId) async {
+    // === CACHE PATCHING: Inject image BEFORE UI rebuild ===
+    try {
+      final bytes = await File(path).readAsBytes();
+      _cacheEngine.patchCache(path, bytes, folderId: folderId);
+    } catch (e) {
+      // Non-fatal: image will load normally if patching fails
+    }
+    
     return await _repo.createNote(
       title: "Snapshot ${DateTime.now().minute}:${DateTime.now().second}",
       content: "",
