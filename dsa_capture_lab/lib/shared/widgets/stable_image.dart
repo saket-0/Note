@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/hardware_cache_engine.dart';
 
-/// StableImage - V4 "Hardware-Native" Widget
+/// StableImage - V6 "Universal" Widget
 /// 
 /// Features:
 /// - **RepaintBoundary**: Isolates painting from layout (kills drag jitter)
@@ -11,6 +11,7 @@ import '../services/hardware_cache_engine.dart';
 /// - **Gapless playback**: Holds old texture during transitions
 /// - **ValueKey enforcement**: Uses fileId for stable identity
 /// - **No BuildContext dependency**: Uses singleton HardwareCacheEngine
+/// - **V6: Type awareness**: Video/PDF overlays for future support
 class StableImage extends ConsumerStatefulWidget {
   /// Unique identifier for this image (used for ValueKey)
   final String fileId;
@@ -78,6 +79,9 @@ class _StableImageState extends ConsumerState<StableImage> {
   Widget build(BuildContext context) {
     final engine = ref.watch(hardwareCacheEngineProvider);
     
+    // V6: Get file type for overlay support
+    final fileType = engine.getFileType(widget.path);
+    
     // SYNCHRONOUS: Always check cache first in build (survives parent rebuilds)
     final cachedProvider = engine.getProvider(widget.path);
     if (cachedProvider != null) {
@@ -104,12 +108,53 @@ class _StableImageState extends ConsumerState<StableImage> {
         
         // CRITICAL: RepaintBoundary isolates image painting
         return RepaintBoundary(
-          child: _cachedProvider != null 
-              ? _buildImage(_cachedProvider!)
-              : _buildFallbackImage(),
+          child: _buildContent(fileType),
         );
       },
     );
+  }
+  
+  /// V6: Build content based on file type
+  Widget _buildContent(FileType fileType) {
+    // If cached, show the image (with overlay if video/pdf)
+    if (_cachedProvider != null) {
+      final imageWidget = _buildImage(_cachedProvider!);
+      
+      // V6: Add overlay for video files (play button)
+      if (fileType == FileType.video) {
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            imageWidget,
+            _buildVideoOverlay(),
+          ],
+        );
+      }
+      
+      // V6: Add overlay for PDF files (document icon)
+      if (fileType == FileType.pdf) {
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            imageWidget,
+            _buildPdfOverlay(),
+          ],
+        );
+      }
+      
+      return imageWidget;
+    }
+    
+    // V6: Type-specific placeholders for uncached content
+    switch (fileType) {
+      case FileType.video:
+        return _buildVideoPlaceholder();
+      case FileType.pdf:
+        return _buildPdfPlaceholder();
+      case FileType.image:
+      case FileType.unknown:
+        return _buildFallbackImage();
+    }
   }
 
   Widget _buildImage(ImageProvider provider) {
@@ -168,4 +213,82 @@ class _StableImageState extends ConsumerState<StableImage> {
       ),
     );
   }
+  
+  /// V6: Video overlay with play button
+  Widget _buildVideoOverlay() {
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black26,
+        child: const Center(
+          child: Icon(
+            Icons.play_circle_filled,
+            color: Colors.white70,
+            size: 48,
+          ),
+        ),
+      ),
+    );
+  }
+  
+  /// V6: PDF overlay with document icon
+  Widget _buildPdfOverlay() {
+    return Positioned(
+      right: 4,
+      bottom: 4,
+      child: Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: Colors.red.shade700,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: const Text(
+          'PDF',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+  
+  /// V6: Video placeholder (when thumbnail not yet generated)
+  Widget _buildVideoPlaceholder() {
+    return Container(
+      width: widget.width ?? double.infinity,
+      height: widget.height ?? 100,
+      color: Colors.grey.shade900,
+      child: const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.videocam, color: Colors.white54, size: 32),
+            SizedBox(height: 4),
+            Text('Video', style: TextStyle(color: Colors.white38, fontSize: 10)),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  /// V6: PDF placeholder (when thumbnail not yet generated)
+  Widget _buildPdfPlaceholder() {
+    return Container(
+      width: widget.width ?? double.infinity,
+      height: widget.height ?? 100,
+      color: Colors.grey.shade900,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.picture_as_pdf, color: Colors.red.shade300, size: 32),
+            const SizedBox(height: 4),
+            const Text('PDF', style: TextStyle(color: Colors.white38, fontSize: 10)),
+          ],
+        ),
+      ),
+    );
+  }
 }
+

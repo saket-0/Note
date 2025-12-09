@@ -23,12 +23,12 @@ class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
   void initState() {
     super.initState();
     
-    // === V5: RAM "UNLEASHED" - Flagship Tier (8GB+ RAM) ===
-    // Unlock Flutter's default image cache limits for maximum performance
-    // largeHeap enabled in AndroidManifest.xml allows 1GB+ allocation
+    // === V6: RAM "BALANCED" - Safe Flagship (Stability Fix) ===
+    // 600MB is safe for 8GB phones (leaves ~7.4GB for OS/other apps)
+    // 1000 images covers 2 full folders of 500 items (typical max)
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      PaintingBinding.instance.imageCache.maximumSizeBytes = 1024 * 1024 * 1024; // 1GB
-      PaintingBinding.instance.imageCache.maximumSize = 5000; // 5000 images
+      PaintingBinding.instance.imageCache.maximumSizeBytes = 600 * 1024 * 1024; // 600MB
+      PaintingBinding.instance.imageCache.maximumSize = 1000; // 1000 images
     });
     
     // Initialize DataRepository (loads cache from DB)
