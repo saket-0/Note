@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'asset_pipeline_service.dart';
@@ -69,16 +68,18 @@ class MemoryGovernor with WidgetsBindingObserver {
   
   /// Called when app goes to background
   void _onPaused() {
-    debugPrint('[MemoryGovernor] App paused - clearing Hot Cache (Tier 1)');
+    debugPrint('[MemoryGovernor] App paused - Persistence Mode active');
     
-    // Clear Tier 1: Flutter's decoded image cache
-    // This frees the expensive GPU textures and decoded bitmaps
-    _clearHotCache();
+    // === PERSISTENCE MODE ===
+    // Keep Hot Cache alive for instant multitasking resume.
+    // Cache will ONLY be cleared in didHaveMemoryPressure().
+    // This is safe for 8GB+ RAM target devices.
+    // _clearHotCache(); // DISABLED for performance-aggressive architecture
     
     // KEEP Tier 2: AssetPipelineService's Uint8List cache
     // This is cheap (raw bytes) and allows instant restore on resume
     
-    debugPrint('[MemoryGovernor] Hot cache cleared, warm cache preserved');
+    debugPrint('[MemoryGovernor] Persistence Mode: ALL caches preserved for instant resume');
   }
   
   /// Called when app resumes from background

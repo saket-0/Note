@@ -27,7 +27,8 @@ class DataRepository {
   // LRU order for note folders (oldest first)
   final List<int?> _notesFolderLRU = [];
   // Maximum number of folders to keep notes cached for
-  static const int _maxCachedFolders = 15;
+  // Increased for performance-aggressive architecture on 8GB+ devices
+  static const int _maxCachedFolders = 40;
   
   // Archived items (flat)
   final List<dynamic> _archivedItems = [];

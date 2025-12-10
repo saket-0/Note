@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'dart:collection';
-import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/painting.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'asset_worker.dart';
@@ -34,6 +35,9 @@ class AssetPipelineService {
   
   // Pending requests (avoid duplicate loads)
   final Set<String> _pendingRequests = {};
+  
+  // Track paths that were requested via prefetch() for texture warming
+  final Set<String> _prefetchedPaths = {};
   
   // Reactive notification for cache updates
   final ValueNotifier<int> cacheUpdateNotifier = ValueNotifier(0);
@@ -174,10 +178,71 @@ class AssetPipelineService {
     // Add to warm cache
     _addToCache(path, bytes);
     
+    // === TEXTURE WARMING ===
+    // If this was a prefetch request, pre-decode into Flutter's ImageCache
+    // This ensures zero-stutter scrolling by having decoded textures ready
+    if (_prefetchedPaths.contains(path)) {
+      _prefetchedPaths.remove(path);
+      _prewarmTexture(bytes, path);
+    }
+    
     // Notify listeners
     cacheUpdateNotifier.value++;
     
     debugPrint('[AssetPipeline] Loaded: $path (${bytes.length} bytes)');
+  }
+  
+  /// Pre-decode image into Flutter's ImageCache (Tier 1) for zero-stutter scrolling
+  /// 
+  /// This decodes the image bytes on a background thread and puts the result
+  /// into Flutter's native ImageCache. When the UI later displays this image,
+  /// it will find it already decoded and ready to render.
+  Future<void> _prewarmTexture(Uint8List bytes, String key) async {
+    try {
+      // Decode the image codec asynchronously (this is CPU-intensive)
+      final ui.Codec codec = await ui.instantiateImageCodec(bytes);
+      // Decode at least one frame to fully warm the texture
+      await codec.getNextFrame();
+      
+      // Create a MemoryImage provider for caching
+      final memoryImage = MemoryImage(bytes);
+      const config = ImageConfiguration.empty;
+      
+      // Resolve the image - this triggers Flutter's internal caching mechanism
+      // The ImageStream will cache the decoded image in Flutter's ImageCache
+      final ImageStream stream = memoryImage.resolve(config);
+      
+      // Add a listener to ensure the image is fully loaded into cache
+      final completer = Completer<void>();
+      late ImageStreamListener listener;
+      listener = ImageStreamListener(
+        (ImageInfo info, bool synchronousCall) {
+          // Image is now cached in Flutter's ImageCache
+          stream.removeListener(listener);
+          if (!completer.isCompleted) completer.complete();
+        },
+        onError: (exception, stackTrace) {
+          stream.removeListener(listener);
+          if (!completer.isCompleted) completer.complete();
+        },
+      );
+      stream.addListener(listener);
+      
+      // Wait for caching to complete (with timeout)
+      await completer.future.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () {
+          stream.removeListener(listener);
+        },
+      );
+      
+      // Clean up the codec
+      codec.dispose();
+      
+      debugPrint('[AssetPipeline] Prewarmed texture: $key');
+    } catch (e) {
+      debugPrint('[AssetPipeline] Prewarm failed for $key: $e');
+    }
   }
   
   /// Called when image load fails
@@ -253,10 +318,12 @@ class AssetPipelineService {
   }
   
   /// Prefetch a list of paths in background
+  /// Images loaded via prefetch() will also be pre-decoded (texture warming)
   void prefetch(List<String> paths) {
     for (final path in paths) {
       if (!_warmCache.containsKey(path) && !_pendingRequests.contains(path)) {
         _pendingRequests.add(path);
+        _prefetchedPaths.add(path); // Mark for texture warming on load complete
         
         // Queue if not yet initialized
         if (!_isInitialized) {

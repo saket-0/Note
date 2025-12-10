@@ -80,29 +80,30 @@ class AssetPrefetcher {
     }
   }
   
-  /// Lookahead: Prefetch first 3 images from first 5 subfolders
+  /// Horizon Prefetching: Load ALL images from first 8 subfolders
+  /// Goal: If a folder is visible, its children must be fully loaded in the background.
   void _prefetchSubfolders(int? parentId) {
     final repo = _ref.read(dataRepositoryProvider);
     final pipeline = _ref.read(assetPipelineServiceProvider);
     
     final subfolderIds = repo.getSubfolderIds(parentId);
     
-    // Take only first 5 subfolders
-    for (final subfolderId in subfolderIds.take(5)) {
+    // === HORIZON PREFETCHING ===
+    // Take first 8 subfolders and load ALL images from each
+    for (final subfolderId in subfolderIds.take(8)) {
       final notes = repo.getNotesForFolder(subfolderId);
       
-      // Collect first 3 images from this subfolder
+      // Collect ALL images from this subfolder (no limits)
       final paths = <String>[];
-      for (final note in notes.take(3)) {
+      for (final note in notes) {
         if (note.imagePath != null && note.imagePath!.isNotEmpty) {
           paths.add(note.imagePath!);
         }
-        paths.addAll(note.images.take(3 - paths.length));
-        if (paths.length >= 3) break;
+        paths.addAll(note.images);
       }
       
       if (paths.isNotEmpty) {
-        debugPrint('[AssetPrefetcher] Lookahead: ${paths.length} images for subfolder $subfolderId');
+        debugPrint('[AssetPrefetcher] Horizon: ${paths.length} images for subfolder $subfolderId');
         pipeline.prefetch(paths);
       }
     }

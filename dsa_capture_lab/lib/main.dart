@@ -24,12 +24,12 @@ class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
   void initState() {
     super.initState();
     
-    // === V6: RAM "BALANCED" - Safe Flagship (Stability Fix) ===
-    // 600MB is safe for 8GB phones (leaves ~7.4GB for OS/other apps)
-    // 1000 images covers 2 full folders of 500 items (typical max)
+    // === V7: RAM "PERFORMANCE AGGRESSIVE" - 8GB Target Devices ===
+    // 1.5GB is the safe upper limit for 8GB devices (leaves ~6.5GB for OS/apps)
+    // 3000 images covers deep navigation without eviction
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      PaintingBinding.instance.imageCache.maximumSizeBytes = 600 * 1024 * 1024; // 600MB
-      PaintingBinding.instance.imageCache.maximumSize = 1000; // 1000 images
+      PaintingBinding.instance.imageCache.maximumSizeBytes = 1536 * 1024 * 1024; // 1.5GB
+      PaintingBinding.instance.imageCache.maximumSize = 3000; // 3000 images
     });
     
     // Initialize DataRepository (loads cache from DB)
