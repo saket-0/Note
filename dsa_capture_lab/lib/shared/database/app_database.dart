@@ -122,6 +122,29 @@ class AppDatabase {
     }).toList();
   }
 
+  /// Load ALL notes with primary image path in a single JOIN query.
+  /// Optimized for eager loading - faster than getAllNotes() when only
+  /// the first (primary) image is needed for thumbnail display.
+  Future<List<Note>> getAllNotesWithPrimaryImage() async {
+    final db = await database;
+    
+    // Single query with correlated subquery for primary image
+    // This is faster than a LEFT JOIN + GROUP BY for this use case
+    final results = await db.rawQuery('''
+      SELECT 
+        n.*,
+        (SELECT image_path FROM note_images ni 
+         WHERE ni.note_id = n.id 
+         ORDER BY ni.position ASC LIMIT 1) as primary_image
+      FROM notes n
+      ORDER BY n.is_pinned DESC, n.position DESC, n.created_at DESC
+    ''');
+    
+    return results.map((m) => Note.fromMap(m, images: 
+      m['primary_image'] != null ? [m['primary_image'] as String] : []
+    )).toList();
+  }
+
   /// Load ALL folders in a single query
   Future<List<Folder>> getAllFolders() async {
     final db = await database;

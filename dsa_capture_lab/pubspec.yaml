@@ -34,6 +34,7 @@ dependencies:
   share_plus: ^12.0.1
   visibility_detector: ^0.4.0+2
   flutter_image_compress: ^2.3.0
+  shared_preferences: ^2.2.3  # Phoenix Protocol: Session persistence
 
 dev_dependencies:
   flutter_test:

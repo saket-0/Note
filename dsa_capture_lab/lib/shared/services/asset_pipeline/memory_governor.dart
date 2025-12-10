@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../features/dashboard/providers/dashboard_state.dart';
+import '../hydrated_state.dart';
 import 'asset_pipeline_service.dart';
 import 'asset_prefetcher.dart';
 
@@ -89,7 +91,11 @@ class MemoryGovernor with WidgetsBindingObserver {
   /// Called when app goes to background
   void _onPaused() {
     _isAppInBackground = true;
-    debugPrint('[MemoryGovernor] App paused - FORTRESS MODE: All caches preserved');
+    
+    // === PHOENIX PROTOCOL: Save state before OS potentially kills us ===
+    _savePhoenixState();
+    
+    debugPrint('[MemoryGovernor] App paused - FORTRESS MODE + Phoenix State saved');
     
     // === FORTRESS MODE ===
     // Do NOT clear imageCache (Tier 1)
@@ -100,6 +106,24 @@ class MemoryGovernor with WidgetsBindingObserver {
     // DISABLED: _clearHotCache();
     // 
     // Result: When user returns from multitasking, images are INSTANTLY visible
+  }
+  
+  /// Phoenix Protocol: Persist current navigation state for restoration
+  void _savePhoenixState() {
+    try {
+      final currentFolderId = _ref.read(currentFolderProvider);
+      final scrollOffset = _ref.read(scrollPositionProvider);
+      
+      final state = HydratedState(
+        currentFolderId: currentFolderId,
+        scrollOffset: scrollOffset,
+      );
+      
+      // Fire-and-forget async save
+      state.save();
+    } catch (e) {
+      debugPrint('[MemoryGovernor] Phoenix save failed: $e');
+    }
   }
   
   /// Called when app resumes from background

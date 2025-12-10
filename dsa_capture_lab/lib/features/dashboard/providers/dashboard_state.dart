@@ -23,6 +23,11 @@ final isGlideMenuOpenProvider = StateProvider<bool>((ref) => false);
 /// Format: {"note_123", "folder_456"}. Cleared after consumption.
 final pendingRemovalKeysProvider = StateProvider<Set<String>>((ref) => {});
 
+/// Tracks if user is scrolling at high velocity (for pausing image loads)
+/// When true, SmartImage shows placeholders instead of triggering decodes
+/// Threshold: 2000 pixels per second (set in DashboardContent)
+final isHighVelocityScrollProvider = StateProvider<bool>((ref) => false);
+
 // ===========================================
 // REACTIVE DATA PROVIDERS
 // Uses version from DataRepository for automatic updates

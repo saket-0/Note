@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
 import '../../../shared/domain/entities/entities.dart';
+import '../../../shared/services/hydrated_state.dart';
 import '../controllers/dashboard_controller.dart';
 import '../providers/dashboard_state.dart';
 import '../selection/selection.dart';
@@ -34,6 +35,12 @@ class _DashboardContentState extends ConsumerState<DashboardContent>
   String? _draggingId; // "note_123" or "folder_456"
   int? _lastFolderId;
   DashboardFilter? _lastFilter; // Track filter to detect changes
+  
+  // === SMART SCROLL: Velocity-based loading pause ===
+  // When scrolling fast, pause image loading to maintain 120Hz
+  bool _isHighVelocityScroll = false;
+  double _lastScrollPosition = 0;
+  static const double _velocityThreshold = 2000.0; // pixels per second
 
   @override
   void initState() {
@@ -190,27 +197,66 @@ class _DashboardContentState extends ConsumerState<DashboardContent>
     final String storageKey = "${widget.currentFilter}_${currentFolderId ?? 'root'}_${widget.viewMode}";
 
     if (widget.viewMode == ViewMode.list) {
-      return ListView.separated(
-        key: PageStorageKey('list_$storageKey'),
-        physics: scrollPhysics,
-        padding: EdgeInsets.only(bottom: widget.bottomPadding),
-        itemCount: _localItems.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemBuilder: (context, index) => _buildItem(index, _localItems),
+      return NotificationListener<ScrollNotification>(
+        onNotification: _handleScrollNotification,
+        child: ListView.separated(
+          key: PageStorageKey('list_$storageKey'),
+          physics: scrollPhysics,
+          padding: EdgeInsets.only(bottom: widget.bottomPadding),
+          itemCount: _localItems.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 12),
+          itemBuilder: (context, index) => _buildItem(index, _localItems),
+        ),
       );
     }
     
-    return MasonryGridView.count(
-      key: PageStorageKey('grid_$storageKey'),
-      physics: scrollPhysics,
-      padding: EdgeInsets.only(bottom: widget.bottomPadding),
-      crossAxisCount: 2,
-      mainAxisSpacing: 12,
-      crossAxisSpacing: 12,
-      cacheExtent: 500, // Pre-build 500px of off-screen items for smoother scroll
-      itemCount: _localItems.length,
-      itemBuilder: (context, index) => _buildItem(index, _localItems),
+    return NotificationListener<ScrollNotification>(
+      onNotification: _handleScrollNotification,
+      child: MasonryGridView.count(
+        key: PageStorageKey('grid_$storageKey'),
+        physics: scrollPhysics,
+        padding: EdgeInsets.only(bottom: widget.bottomPadding),
+        crossAxisCount: 2,
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+        cacheExtent: 500, // Pre-build 500px of off-screen items for smoother scroll
+        itemCount: _localItems.length,
+        itemBuilder: (context, index) => _buildItem(index, _localItems),
+      ),
     );
+  }
+
+  /// Handle scroll notifications and detect high-velocity scrolling
+  bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollUpdateNotification) {
+      final currentPosition = notification.metrics.pixels;
+      
+      // === PHOENIX PROTOCOL: Track scroll position for persistence ===
+      ref.read(scrollPositionProvider.notifier).update(currentPosition);
+      
+      // Calculate velocity from position delta (approximate)
+      // ScrollUpdateNotification provides per-frame deltas
+      final delta = (currentPosition - _lastScrollPosition).abs();
+      // Estimate velocity: delta * 60fps = pixels per second
+      final estimatedVelocity = delta * 60;
+      
+      _lastScrollPosition = currentPosition;
+      
+      final wasHighVelocity = _isHighVelocityScroll;
+      _isHighVelocityScroll = estimatedVelocity > _velocityThreshold;
+      
+      // Update provider only if state changed (avoids unnecessary rebuilds)
+      if (wasHighVelocity != _isHighVelocityScroll) {
+        ref.read(isHighVelocityScrollProvider.notifier).state = _isHighVelocityScroll;
+      }
+    } else if (notification is ScrollEndNotification) {
+      // Scroll ended - always resume normal loading
+      if (_isHighVelocityScroll) {
+        _isHighVelocityScroll = false;
+        ref.read(isHighVelocityScrollProvider.notifier).state = false;
+      }
+    }
+    return false; // Don't consume the notification
   }
 
   void _errorMessageIfMismatch(List<dynamic> source) {

@@ -9,17 +9,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'asset_worker.dart';
 
-/// AssetPipelineService - Central coordinator for the 3-tier cache system
+/// AssetPipelineService - Central coordinator for the 4-tier cache system
 /// 
+/// Tier 0 (Texture Registry): Pre-decoded ui.Image objects (GPU-ready, 1GB limit)
 /// Tier 1 (Hot Cache): Flutter's native ImageCache - managed by MemoryGovernor
 /// Tier 2 (Warm Cache): This service's _warmCache (Uint8List raw bytes)
 /// Tier 3 (Cold Cache): Disk - accessed via AssetWorker isolate
 /// 
 /// Design Philosophy:
-/// - Store RAW BYTES (Uint8List), not decoded bitmaps
-/// - Raw bytes use ~3-4x less memory than decoded RGBA bitmaps
-/// - On cache hit: Image.memory() decodes instantly (microseconds)
-/// - LRU eviction with hard limits to prevent OOM
+/// - Tier 0: GPU-ready textures for ZERO-STUTTER 120Hz scrolling
+/// - Tier 2: Raw bytes (3-4x more efficient than decoded bitmaps)
+/// - On Tier 2 hit: Image.memory() decodes instantly (microseconds)
+/// - Memory-based LRU eviction to prevent OOM
 /// 
 /// === RAM-FIRST, DISK-LATER ARCHITECTURE ===
 /// - ingestImmediate(): Inject bytes → Decode → Async disk write
@@ -29,6 +30,14 @@ class AssetPipelineService {
   // ignore: unused_field
   final Ref _ref;
   final AssetWorker _worker = AssetWorker();
+  
+  // === TEXTURE REGISTRY (Tier 0) ===
+  // Pre-decoded ui.Image objects for ZERO-STUTTER 120Hz scrolling
+  // These are GPU-ready textures - no decoding needed on render
+  final LinkedHashMap<String, ui.Image> _textureRegistry = LinkedHashMap();
+  int _textureBytes = 0;
+  // 1GB limit for decoded textures (safe for 8GB devices)
+  static const int _maxTextureBytes = 1024 * 1024 * 1024;
   
   // === WARM CACHE (Tier 2) ===
   // Stores raw bytes, NOT decoded images
@@ -170,6 +179,121 @@ class AssetPipelineService {
     
     debugPrint('[AssetPipeline] Cache Hit: $path');
     return bytes;
+  }
+  
+  // ============================================================
+  // === TEXTURE REGISTRY (TIER 0) - GPU-READY TEXTURES ===
+  // ============================================================
+  
+  /// Check if decoded texture exists (synchronous, for UI thread lookup)
+  /// Returns null if not cached - caller should fallback to bytes cache
+  ui.Image? getTexture(String path) {
+    if (!_textureRegistry.containsKey(path)) return null;
+    
+    // Move to end (most recently used) - LRU touch
+    final img = _textureRegistry.remove(path)!;
+    _textureRegistry[path] = img;
+    
+    return img;
+  }
+  
+  /// Check if texture is cached (synchronous)
+  bool hasTexture(String path) => _textureRegistry.containsKey(path);
+  
+  /// Add decoded texture to registry with memory-based LRU eviction
+  void _addTexture(String path, ui.Image image) {
+    // Estimate texture memory: width * height * 4 bytes (RGBA)
+    final imageBytes = image.width * image.height * 4;
+    
+    // Already cached? Just update LRU
+    if (_textureRegistry.containsKey(path)) {
+      final existing = _textureRegistry.remove(path)!;
+      _textureRegistry[path] = existing;
+      return;
+    }
+    
+    // Evict if necessary (memory-based, not count-based)
+    while (_textureBytes + imageBytes > _maxTextureBytes && _textureRegistry.isNotEmpty) {
+      _evictOldestTexture();
+    }
+    
+    _textureRegistry[path] = image;
+    _textureBytes += imageBytes;
+    
+    debugPrint('[AssetPipeline] Texture cached: $path (${imageBytes ~/ 1024}KB, total: ${_textureBytes ~/ 1024 ~/ 1024}MB)');
+  }
+  
+  /// Evict oldest texture (LRU)
+  void _evictOldestTexture() {
+    if (_textureRegistry.isEmpty) return;
+    
+    final oldestPath = _textureRegistry.keys.first;
+    final oldestImage = _textureRegistry.remove(oldestPath)!;
+    final imageBytes = oldestImage.width * oldestImage.height * 4;
+    _textureBytes -= imageBytes;
+    
+    // Dispose the ui.Image to free GPU memory
+    oldestImage.dispose();
+    
+    debugPrint('[AssetPipeline] Texture evicted: $oldestPath');
+  }
+  
+  /// Pre-decode an image into GPU-ready texture (Tier 0).
+  /// Call this BEFORE widget builds for zero-stutter scrolling.
+  /// 
+  /// This is the PUBLIC API for explicit texture preheating.
+  /// Use when you know an image will be displayed soon.
+  Future<void> prewarm(String path) async {
+    // Already in texture registry?
+    if (_textureRegistry.containsKey(path)) return;
+    
+    // Try to get bytes from warm cache first
+    final bytes = _warmCache[path];
+    if (bytes != null) {
+      try {
+        final codec = await ui.instantiateImageCodec(bytes);
+        final frame = await codec.getNextFrame();
+        _addTexture(path, frame.image);
+        codec.dispose();
+        debugPrint('[AssetPipeline] Prewarmed: $path');
+      } catch (e) {
+        debugPrint('[AssetPipeline] Prewarm decode failed: $path - $e');
+      }
+      return;
+    }
+    
+    // Not in bytes cache - load from disk first, then decode
+    final diskBytes = await fetchImage(path, priority: true);
+    if (diskBytes != null) {
+      try {
+        final codec = await ui.instantiateImageCodec(diskBytes);
+        final frame = await codec.getNextFrame();
+        _addTexture(path, frame.image);
+        codec.dispose();
+        debugPrint('[AssetPipeline] Prewarmed from disk: $path');
+      } catch (e) {
+        debugPrint('[AssetPipeline] Prewarm decode failed: $path - $e');
+      }
+    }
+  }
+  
+  /// Prewarm multiple paths in parallel (with concurrency limit)
+  Future<void> prewarmBatch(List<String> paths, {int concurrency = 4}) async {
+    final queue = [...paths];
+    final active = <Future<void>>[];
+    
+    while (queue.isNotEmpty || active.isNotEmpty) {
+      while (queue.isNotEmpty && active.length < concurrency) {
+        final path = queue.removeAt(0);
+        final future = prewarm(path);
+        active.add(future);
+        // Schedule removal after completion
+        future.then((_) => active.remove(future));
+      }
+      if (active.isNotEmpty) {
+        await Future.any(active);
+      }
+    }
   }
   
   /// Fetch image bytes (async)
@@ -481,6 +605,11 @@ class AssetPipelineService {
   /// Get cache statistics
   Map<String, dynamic> getCacheStats() {
     return {
+      // Tier 0 (Texture Registry)
+      'textureCount': _textureRegistry.length,
+      'textureBytes': _textureBytes,
+      'maxTextureBytes': _maxTextureBytes,
+      // Tier 2 (Warm Cache)
       'itemCount': _warmCache.length,
       'totalBytes': _currentBytes,
       'maxItems': _maxItems,
@@ -490,18 +619,35 @@ class AssetPipelineService {
     };
   }
   
-  /// Clear entire warm cache
+  /// Clear entire warm cache and texture registry
   void clearCache() {
+    // Clear texture registry with proper disposal
+    for (final image in _textureRegistry.values) {
+      image.dispose();
+    }
+    _textureRegistry.clear();
+    _textureBytes = 0;
+    
+    // Clear warm cache
     _warmCache.clear();
     _currentBytes = 0;
+    
     cacheUpdateNotifier.value++;
-    debugPrint('[AssetPipeline] Cache cleared');
+    debugPrint('[AssetPipeline] All caches cleared');
   }
   
   /// Dispose the service
   void dispose() {
     _workerSubscription?.cancel();
     _worker.dispose();
+    
+    // Dispose texture registry
+    for (final image in _textureRegistry.values) {
+      image.dispose();
+    }
+    _textureRegistry.clear();
+    _textureBytes = 0;
+    
     _warmCache.clear();
     cacheUpdateNotifier.dispose();
     _isInitialized = false;
