@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../database/app_database.dart';
 import '../domain/entities/entities.dart';
@@ -70,8 +71,14 @@ class DataRepository {
       }
     }
     
-    // === EAGER LOAD ALL NOTES (Batch JOIN query) ===
-    final allNotes = await _db.getAllNotesWithPrimaryImage();
+    // === EAGER LOAD ALL NOTES (Isolate-parsed for UI thread freedom) ===
+    // Step 1: Fetch raw data on main thread (I/O bound, fast)
+    final rawNotes = await _db.getAllNotesWithPrimaryImageRaw();
+    
+    // Step 2: Parse Note objects in isolate (CPU bound, offloaded)
+    final allNotes = await compute(_parseNotesInIsolate, rawNotes);
+    
+    // Step 3: Categorize into buckets (fast, main thread)
     for (final note in allNotes) {
       if (note.isDeleted) {
         _trashedItems.add(note);
@@ -87,7 +94,15 @@ class DataRepository {
     _sortAllNotesLists();
     _isLoaded = true;
     
-    print('[REPO] Initialized: ${allFolders.length} folders, ${allNotes.length} notes loaded into RAM');
+    debugPrint('[REPO] Initialized: ${allFolders.length} folders, ${allNotes.length} notes (isolate-parsed)');
+  }
+  
+  /// Runs in a separate isolate - parses raw Map to Note objects
+  /// Static top-level function required by compute()
+  static List<Note> _parseNotesInIsolate(List<Map<String, dynamic>> rawNotes) {
+    return rawNotes.map((m) => Note.fromMap(m, images: 
+      m['primary_image'] != null ? [m['primary_image'] as String] : []
+    )).toList();
   }
   
   /// Sort ALL notes lists (called once at startup)

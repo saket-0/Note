@@ -109,15 +109,24 @@ class _SmartImageState extends ConsumerState<SmartImage> {
       _cachedTexture = texture;
       _isLoading = false;
       
-      // RawImage renders GPU-ready texture with NO decode step
-      return RepaintBoundary(
-        child: RawImage(
-          image: texture,
-          fit: widget.fit,
-          width: widget.width ?? double.infinity,
-          height: widget.height,
-        ),
-      );
+      // DEFENSIVE: Wrap in try-catch to handle race condition where
+      // texture may have been disposed by GC between lookup and render.
+      // This should be extremely rare with the GC-safe eviction strategy.
+      try {
+        // RawImage renders GPU-ready texture with NO decode step
+        return RepaintBoundary(
+          child: RawImage(
+            image: texture,
+            fit: widget.fit,
+            width: widget.width ?? double.infinity,
+            height: widget.height,
+          ),
+        );
+      } catch (e) {
+        // Texture was disposed - clear cache and fall through to bytes/placeholder
+        debugPrint('[SmartImage] Texture disposed for ${widget.path}, falling back');
+        _cachedTexture = null;
+      }
     }
     
     // === TIER 2: Check Warm Cache (Uint8List) ===

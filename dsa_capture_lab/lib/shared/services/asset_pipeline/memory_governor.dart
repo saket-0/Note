@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../features/dashboard/providers/dashboard_state.dart';
+import '../../data/data_repository.dart';
 import '../hydrated_state.dart';
+import '../recent_folders_service.dart';
 import 'asset_pipeline_service.dart';
 import 'asset_prefetcher.dart';
 
@@ -59,32 +61,73 @@ class MemoryGovernor with WidgetsBindingObserver {
   
   @override
   void didHaveMemoryPressure() {
-    // Emergency eviction on OS memory pressure
     debugPrint('[MemoryGovernor] ⚠️ Memory pressure detected!');
     
-    // Only evict if app is in background (Fortress Mode exception)
-    if (_isAppInBackground) {
-      debugPrint('[MemoryGovernor] App in background - evicting caches');
+    // === GC-SAFE CACHE CLEARING ===
+    // Since we removed dispose() calls from AssetPipelineService,
+    // clearing the cache is now safe even if images are displayed.
+    // The cache is cleared (future lookups will reload) but
+    // currently displayed images survive until GC collects them.
+    try {
+      final pipeline = _ref.read(assetPipelineServiceProvider);
       
-      // Clear Tier 1 (Flutter's image cache)
-      _clearHotCache();
+      if (_isAppInBackground) {
+        // App in background - full cache clear
+        debugPrint('[MemoryGovernor] App in background - clearing all caches');
+        pipeline.clearCache();
+      } else {
+        // App in foreground - partial eviction to preserve UX
+        debugPrint('[MemoryGovernor] App in foreground - partial eviction');
+        _evictByFolderContext(aggressive: false);
+      }
+    } catch (e) {
+      debugPrint('[MemoryGovernor] Cache eviction failed: $e');
+    }
+  }
+  
+  /// Context-aware eviction: evict oldest folder contexts first
+  /// This is smarter than random LRU - preserves recently viewed folders
+  /// MEMORY SAFETY: All eviction methods are now GC-safe (no dispose calls)
+  void _evictByFolderContext({required bool aggressive}) {
+    try {
+      final recentService = _ref.read(recentFoldersServiceProvider);
+      final pipeline = _ref.read(assetPipelineServiceProvider);
+      final repo = _ref.read(dataRepositoryProvider);
       
-      // Ask pipeline to evict some Tier 2 items
-      try {
-        final pipeline = _ref.read(assetPipelineServiceProvider);
-        pipeline.evictItems(100); // Evict 100 items to free memory
-      } catch (e) {
-        debugPrint('[MemoryGovernor] Pipeline not available for eviction: $e');
+      // Get eviction order (oldest/5th folder first)
+      final evictionOrder = recentService.getEvictionOrder();
+      
+      if (evictionOrder.isEmpty) {
+        // No recent folders tracked, fall back to simple eviction
+        pipeline.evictItems(aggressive ? 100 : 25);
+        return;
       }
-    } else {
-      // App in foreground - minimal eviction to preserve UX
-      debugPrint('[MemoryGovernor] App in foreground - minimal eviction');
-      try {
-        final pipeline = _ref.read(assetPipelineServiceProvider);
-        pipeline.evictItems(25); // Evict only 25 items
-      } catch (e) {
-        debugPrint('[MemoryGovernor] Pipeline not available for eviction: $e');
+      
+      // How many folders to evict
+      final foldersToEvict = aggressive ? 3 : 1;
+      
+      for (int i = 0; i < foldersToEvict && i < evictionOrder.length; i++) {
+        final folderId = evictionOrder[i];
+        final paths = repo.getImagePathsForFolder(folderId);
+        
+        // Evict Tier 0 (TextureRegistry) for this folder - GC-safe
+        for (final path in paths) {
+          pipeline.evictTexture(path);
+        }
+        
+        // Evict Tier 2 (bytes) for this folder
+        for (final path in paths) {
+          pipeline.evictBytes(path);
+        }
+        
+        debugPrint('[MemoryGovernor] Evicted context for folder $folderId (${paths.length} images)');
       }
+      
+      // Log remaining cache status
+      final stats = pipeline.getCacheStats();
+      debugPrint('[MemoryGovernor] After eviction: ${stats['textureBytes'] ~/ 1024 ~/ 1024}MB textures, ${stats['totalBytes'] ~/ 1024 ~/ 1024}MB bytes');
+    } catch (e) {
+      debugPrint('[MemoryGovernor] Context eviction failed: $e');
     }
   }
   

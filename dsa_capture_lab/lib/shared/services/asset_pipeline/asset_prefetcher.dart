@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../features/dashboard/providers/dashboard_state.dart';
 import '../../data/data_repository.dart';
+import '../recent_folders_service.dart';
 import 'asset_pipeline_service.dart';
 
 /// AssetPrefetcher - Predictive Loading Engine with Horizon Decoding
@@ -53,6 +54,10 @@ class AssetPrefetcher {
     
     _lastPrefetchedFolder = folderId;
     
+    // === HYDRATED CONTEXT: Track folder visit ===
+    final recentService = _ref.read(recentFoldersServiceProvider);
+    recentService.recordVisit(folderId);
+    
     // Prefetch current folder (HIGH PRIORITY) - Full Tier 1 decode
     _prefetchFolder(folderId);
     
@@ -61,6 +66,10 @@ class AssetPrefetcher {
     
     // Horizon Prefetching: Pre-decode visible subfolders
     _prefetchSubfoldersWithHorizon(folderId);
+    
+    // === MULTI-CONTEXT PREFETCHING ===
+    // Warm the 4 other recently viewed folders to Tier 0
+    _prefetchRecentContexts(folderId);
   }
   
   /// Prefetch all images in a folder with full Tier 1 decode
@@ -146,6 +155,38 @@ class AssetPrefetcher {
     
     debugPrint('[AssetPrefetcher] Prediction: Pre-loading folder $folderId');
     _prefetchFolder(folderId);
+  }
+  
+  /// Multi-context prefetching: Warm recently viewed folders to Tier 0
+  /// 
+  /// This is the key to zero-latency folder switching after app resume.
+  /// Decodes ALL images from recent folders to GPU-ready textures.
+  void _prefetchRecentContexts(int? currentFolder) {
+    final recentService = _ref.read(recentFoldersServiceProvider);
+    final pipeline = _ref.read(assetPipelineServiceProvider);
+    final repo = _ref.read(dataRepositoryProvider);
+    
+    // Get the 4 other recently viewed folders (exclude current)
+    final foldersToWarm = recentService.getFoldersToWarm(currentFolder);
+    
+    if (foldersToWarm.isEmpty) {
+      debugPrint('[AssetPrefetcher] No recent contexts to warm');
+      return;
+    }
+    
+    debugPrint('[AssetPrefetcher] Multi-context warm: ${foldersToWarm.length} folders');
+    
+    for (final folderId in foldersToWarm) {
+      final paths = repo.getImagePathsForFolder(folderId);
+      
+      if (paths.isEmpty) continue;
+      
+      // Prewarm to Tier 0 (TextureRegistry) with low concurrency
+      // to avoid overwhelming the CPU during navigation
+      pipeline.prewarmBatch(paths, concurrency: 2);
+      
+      debugPrint('[AssetPrefetcher] Queued ${paths.length} images for folder $folderId');
+    }
   }
 }
 

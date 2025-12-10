@@ -27,12 +27,17 @@ class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
     super.initState();
     
     // === INDUSTRY GRADE 10/10 PERFORMANCE ARCHITECTURE ===
-    // Target: Realme Narzo 70 Turbo (8GB RAM)
+    // Target: Realme Narzo 70 Turbo (8GB RAM, ~2GB free for app)
     
-    // Configure Flutter ImageCache for 8GB devices
+    // === MEMORY-SAFE CACHE LIMITS ===
+    // Tuned for 2GB free heap:
+    // - ImageCache (Tier 1): 1GB
+    // - TextureRegistry (Tier 0): 350MB  
+    // - WarmCache (Tier 2): 200MB
+    // - Total: ~1.5GB, leaves room for Dart heap + overhead
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      PaintingBinding.instance.imageCache.maximumSizeBytes = 1536 * 1024 * 1024; // 1.5GB
-      PaintingBinding.instance.imageCache.maximumSize = 3000; // 3000 images
+      PaintingBinding.instance.imageCache.maximumSizeBytes = 1024 * 1024 * 1024; // 1GB
+      PaintingBinding.instance.imageCache.maximumSize = 2000; // 2000 images
     });
     
     // === INITIALIZATION CHAIN ===

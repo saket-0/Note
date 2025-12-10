@@ -34,24 +34,33 @@ class AssetPipelineService {
   // === TEXTURE REGISTRY (Tier 0) ===
   // Pre-decoded ui.Image objects for ZERO-STUTTER 120Hz scrolling
   // These are GPU-ready textures - no decoding needed on render
+  // 
+  // MEMORY SAFETY: We do NOT call dispose() on evicted images.
+  // Reason: If a SmartImage widget is still displaying the image,
+  // disposing it causes "underlying data released" crash.
+  // Instead, we let Dart GC clean up images when no longer referenced.
   final LinkedHashMap<String, ui.Image> _textureRegistry = LinkedHashMap();
   int _textureBytes = 0;
-  // 1GB limit for decoded textures (safe for 8GB devices)
-  static const int _maxTextureBytes = 1024 * 1024 * 1024;
+  // 350MB limit for decoded textures (safe for 2GB free heap on 8GB device)
+  static const int _maxTextureBytes = 350 * 1024 * 1024;
   
   // === WARM CACHE (Tier 2) ===
   // Stores raw bytes, NOT decoded images
   // LinkedHashMap maintains access order for LRU eviction
   final LinkedHashMap<String, Uint8List> _warmCache = LinkedHashMap();
   
+  // === PENDING DISK WRITES (for confirmation tracking) ===
+  // Tracks ingestImmediate calls waiting for disk write confirmation
+  final Map<String, Completer<bool>> _pendingDiskWrites = {};
+  
   // === ADAPTIVE LRU CONFIGURATION ===
   // High-end device limits (8GB+ RAM target)
   late final int _maxItems;
   late final int _maxBytes;
   
-  // High-performance limits for 8GB+ devices
-  static const int _highEndMaxItems = 2000;
-  static const int _highEndMaxBytes = 400 * 1024 * 1024; // 400MB
+  // High-performance limits for 8GB+ devices (tuned for 2GB free heap)
+  static const int _highEndMaxItems = 1000;
+  static const int _highEndMaxBytes = 200 * 1024 * 1024; // 200MB
   
   // Conservative limits for low-end devices (fallback)
   static const int _lowEndMaxItems = 500;
@@ -224,6 +233,7 @@ class AssetPipelineService {
   }
   
   /// Evict oldest texture (LRU)
+  /// MEMORY SAFETY: Does NOT call dispose() - let GC handle cleanup
   void _evictOldestTexture() {
     if (_textureRegistry.isEmpty) return;
     
@@ -232,10 +242,10 @@ class AssetPipelineService {
     final imageBytes = oldestImage.width * oldestImage.height * 4;
     _textureBytes -= imageBytes;
     
-    // Dispose the ui.Image to free GPU memory
-    oldestImage.dispose();
+    // DO NOT dispose - image may still be displayed by SmartImage widget
+    // GC will clean it up when no longer referenced
     
-    debugPrint('[AssetPipeline] Texture evicted: $oldestPath');
+    debugPrint('[AssetPipeline] Texture evicted (GC-safe): $oldestPath');
   }
   
   /// Pre-decode an image into GPU-ready texture (Tier 0).
@@ -356,7 +366,12 @@ class AssetPipelineService {
         // Future: Handle thumbnail generation
         break;
       case FileSavedResponse():
-        debugPrint('[AssetPipeline] Background save complete: ${response.path}');
+        // Complete pending disk write confirmation
+        final completer = _pendingDiskWrites.remove(response.path);
+        if (completer != null && !completer.isCompleted) {
+          completer.complete(response.success);
+        }
+        debugPrint('[AssetPipeline] Disk write ${response.success ? "confirmed" : "FAILED"}: ${response.path}');
         break;
     }
   }
@@ -483,6 +498,27 @@ class AssetPipelineService {
     cacheUpdateNotifier.value++;
   }
   
+  /// Evict a specific texture from Tier 0 (TextureRegistry)
+  /// Called by MemoryGovernor for context-aware eviction
+  /// MEMORY SAFETY: Does NOT dispose - let GC handle cleanup
+  void evictTexture(String path) {
+    final image = _textureRegistry.remove(path);
+    if (image != null) {
+      final bytes = image.width * image.height * 4;
+      _textureBytes -= bytes;
+      // DO NOT dispose - image may still be in use by UI
+    }
+  }
+  
+  /// Evict specific bytes from Tier 2 (WarmCache)
+  /// Called by MemoryGovernor for context-aware eviction
+  void evictBytes(String path) {
+    final bytes = _warmCache.remove(path);
+    if (bytes != null) {
+      _currentBytes -= bytes.length;
+    }
+  }
+  
   // ============================================================
   // === RAM-FIRST, DISK-LATER API ===
   // ============================================================
@@ -498,7 +534,10 @@ class AssetPipelineService {
   /// 
   /// [path] - The intended file path where the image will be saved
   /// [rawBytes] - Raw image bytes (from camera or other source)
-  Future<void> ingestImmediate(String path, Uint8List rawBytes) async {
+  /// 
+  /// Returns: Future<bool> that completes when disk write is confirmed
+  ///          true = success, false = failure
+  Future<bool> ingestImmediate(String path, Uint8List rawBytes) async {
     // 1. RAM Injection - Add to Tier 2 immediately (synchronous)
     _addToCache(path, rawBytes);
     _prefetchedPaths.add(path);
@@ -506,20 +545,28 @@ class AssetPipelineService {
     // 2. Instant Pre-warming - Decode into Tier 1 (fire and forget)
     unawaited(_prewarmTexture(rawBytes, path));
     
-    // 3. Async Persistence - Offload disk write to background worker
+    // 3. Async Persistence with confirmation tracking
+    final completer = Completer<bool>();
+    _pendingDiskWrites[path] = completer;
+    
     if (_isInitialized) {
       _worker.writeToDisk(path, rawBytes);
     } else {
       // If worker not ready, write synchronously (fallback)
       try {
         await File(path).writeAsBytes(rawBytes);
+        completer.complete(true);
       } catch (e) {
         debugPrint('[AssetPipeline] Fallback write failed: $e');
+        completer.complete(false);
       }
     }
     
     cacheUpdateNotifier.value++;
     debugPrint('[AssetPipeline] Ingested (RAM-First): $path (${rawBytes.length} bytes)');
+    
+    // Return the confirmation future
+    return completer.future;
   }
   
   /// Revalidates visible assets after app resume.
@@ -620,11 +667,10 @@ class AssetPipelineService {
   }
   
   /// Clear entire warm cache and texture registry
+  /// MEMORY SAFETY: Does NOT dispose textures - let GC handle cleanup
   void clearCache() {
-    // Clear texture registry with proper disposal
-    for (final image in _textureRegistry.values) {
-      image.dispose();
-    }
+    // Clear texture registry without disposing
+    // Images may still be referenced by SmartImage widgets
     _textureRegistry.clear();
     _textureBytes = 0;
     
@@ -633,25 +679,24 @@ class AssetPipelineService {
     _currentBytes = 0;
     
     cacheUpdateNotifier.value++;
-    debugPrint('[AssetPipeline] All caches cleared');
+    debugPrint('[AssetPipeline] All caches cleared (GC-safe)');
   }
   
   /// Dispose the service
+  /// Note: We do NOT dispose textures here either - widgets may still reference them
   void dispose() {
     _workerSubscription?.cancel();
     _worker.dispose();
     
-    // Dispose texture registry
-    for (final image in _textureRegistry.values) {
-      image.dispose();
-    }
+    // Clear registries without disposing images
+    // GC will clean up when app is fully terminated
     _textureRegistry.clear();
     _textureBytes = 0;
     
     _warmCache.clear();
     cacheUpdateNotifier.dispose();
     _isInitialized = false;
-    debugPrint('[AssetPipeline] Disposed');
+    debugPrint('[AssetPipeline] Disposed (GC-safe)');
   }
 }
 

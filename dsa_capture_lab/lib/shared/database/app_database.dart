@@ -144,6 +144,21 @@ class AppDatabase {
       m['primary_image'] != null ? [m['primary_image'] as String] : []
     )).toList();
   }
+  
+  /// Get raw Map results (without parsing) for isolate processing
+  /// Used by DataRepository for compute() isolate parsing
+  Future<List<Map<String, dynamic>>> getAllNotesWithPrimaryImageRaw() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT 
+        n.*,
+        (SELECT image_path FROM note_images ni 
+         WHERE ni.note_id = n.id 
+         ORDER BY ni.position ASC LIMIT 1) as primary_image
+      FROM notes n
+      ORDER BY n.is_pinned DESC, n.position DESC, n.created_at DESC
+    ''');
+  }
 
   /// Load ALL folders in a single query
   Future<List<Folder>> getAllFolders() async {
