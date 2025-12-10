@@ -100,32 +100,54 @@ class AssetWorker {
   bool _isInitialized = false;
   bool get isInitialized => _isInitialized;
   
+  // Initialization lock to prevent race conditions
+  Completer<void>? _initCompleter;
+  
   /// Initialize the worker isolate
+  /// Uses a Completer lock to prevent double initialization
   Future<void> initialize() async {
+    // Already initialized
     if (_isInitialized) return;
     
-    _receivePort = ReceivePort();
+    // Initialization in progress - wait for it
+    if (_initCompleter != null) {
+      await _initCompleter!.future;
+      return;
+    }
     
-    _isolate = await Isolate.spawn(
-      _workerEntryPoint,
-      _receivePort!.sendPort,
-    );
+    // Start initialization with lock
+    _initCompleter = Completer<void>();
     
-    // First message is the worker's SendPort
-    final completer = Completer<SendPort>();
-    
-    _receivePort!.listen((message) {
-      if (message is SendPort) {
-        completer.complete(message);
-      } else if (message is AssetWorkerResponse) {
-        _responseController.add(message);
-      }
-    });
-    
-    _sendPort = await completer.future;
-    _isInitialized = true;
-    
-    debugPrint('[AssetWorker] Initialized and ready');
+    try {
+      _receivePort = ReceivePort();
+      
+      _isolate = await Isolate.spawn(
+        _workerEntryPoint,
+        _receivePort!.sendPort,
+      );
+      
+      // First message is the worker's SendPort
+      final sendPortCompleter = Completer<SendPort>();
+      
+      _receivePort!.listen((message) {
+        if (message is SendPort && !sendPortCompleter.isCompleted) {
+          sendPortCompleter.complete(message);
+        } else if (message is AssetWorkerResponse) {
+          _responseController.add(message);
+        }
+      });
+      
+      _sendPort = await sendPortCompleter.future;
+      _isInitialized = true;
+      
+      debugPrint('[AssetWorker] Initialized and ready');
+      _initCompleter!.complete();
+    } catch (e) {
+      debugPrint('[AssetWorker] Initialization failed: $e');
+      _initCompleter!.completeError(e);
+      _initCompleter = null;
+      rethrow;
+    }
   }
   
   /// Send a command to the worker

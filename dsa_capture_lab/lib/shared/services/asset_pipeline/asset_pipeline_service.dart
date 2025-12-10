@@ -43,19 +43,51 @@ class AssetPipelineService {
   
   bool _isInitialized = false;
   
+  // Initialization lock to prevent race conditions
+  Completer<void>? _initCompleter;
+  
+  // Queue of paths to load once initialized
+  final List<String> _pendingLoadQueue = [];
+  
   AssetPipelineService(this._ref);
   
   /// Initialize the service
+  /// Uses a Completer lock to prevent double initialization
   Future<void> initialize() async {
+    // Already initialized
     if (_isInitialized) return;
     
-    await _worker.initialize();
+    // Initialization in progress - wait for it
+    if (_initCompleter != null) {
+      await _initCompleter!.future;
+      return;
+    }
     
-    // Listen to worker responses
-    _workerSubscription = _worker.responses.listen(_handleWorkerResponse);
+    // Start initialization with lock
+    _initCompleter = Completer<void>();
     
-    _isInitialized = true;
-    debugPrint('[AssetPipeline] Initialized');
+    try {
+      await _worker.initialize();
+      
+      // Listen to worker responses
+      _workerSubscription = _worker.responses.listen(_handleWorkerResponse);
+      
+      _isInitialized = true;
+      debugPrint('[AssetPipeline] Initialized');
+      
+      // Process any queued commands
+      for (final path in _pendingLoadQueue) {
+        _worker.loadImage(path, priority: false);
+      }
+      _pendingLoadQueue.clear();
+      
+      _initCompleter!.complete();
+    } catch (e) {
+      debugPrint('[AssetPipeline] Initialization failed: $e');
+      _initCompleter!.completeError(e);
+      _initCompleter = null;
+      rethrow;
+    }
   }
   
   /// Check if bytes are cached (synchronous)
@@ -210,6 +242,13 @@ class AssetPipelineService {
     if (_pendingRequests.contains(path)) return;
     
     _pendingRequests.add(path);
+    
+    // Queue if not yet initialized
+    if (!_isInitialized) {
+      _pendingLoadQueue.add(path);
+      return;
+    }
+    
     _worker.loadImage(path, priority: true);
   }
   
@@ -218,7 +257,13 @@ class AssetPipelineService {
     for (final path in paths) {
       if (!_warmCache.containsKey(path) && !_pendingRequests.contains(path)) {
         _pendingRequests.add(path);
-        _worker.loadImage(path, priority: false);
+        
+        // Queue if not yet initialized
+        if (!_isInitialized) {
+          _pendingLoadQueue.add(path);
+        } else {
+          _worker.loadImage(path, priority: false);
+        }
       }
     }
   }
