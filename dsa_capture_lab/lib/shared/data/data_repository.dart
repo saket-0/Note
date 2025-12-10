@@ -12,15 +12,23 @@ import '../services/layout_service.dart';
 /// - Async writes with automatic DB sync
 /// - State-based change notifications (reactive UI)
 /// - Optimistic updates with rollback on failure
+/// - Lazy loading: Notes loaded on-demand per folder (not all at startup)
 class DataRepository {
   final AppDatabase _db;
   final Ref _ref;
   
   // === IN-MEMORY CACHE ===
-  // Folders by parentId (null = root)
+  // Folders by parentId (null = root) - loaded at startup
   final Map<int?, List<Folder>> _foldersByParent = {};
-  // Notes by folderId (null = root)
+  // Notes by folderId (null = root) - LAZY LOADED on-demand
   final Map<int?, List<Note>> _notesByFolder = {};
+  // Track which folders have been loaded from DB
+  final Set<int?> _loadedNotesFolders = {};
+  // LRU order for note folders (oldest first)
+  final List<int?> _notesFolderLRU = [];
+  // Maximum number of folders to keep notes cached for
+  static const int _maxCachedFolders = 15;
+  
   // Archived items (flat)
   final List<dynamic> _archivedItems = [];
   // Trashed items (flat)
@@ -39,7 +47,8 @@ class DataRepository {
   // INITIALIZATION
   // ===========================================
 
-  /// Load all data from DB into memory cache.
+  /// Load folder tree and archive/trash from DB into memory cache.
+  /// Notes are lazy-loaded per folder on first access.
   /// Call once at app startup.
   Future<void> initialize() async {
     if (_isLoaded) return;
@@ -47,12 +56,13 @@ class DataRepository {
     // Clear existing
     _foldersByParent.clear();
     _notesByFolder.clear();
+    _loadedNotesFolders.clear();
+    _notesFolderLRU.clear();
     _archivedItems.clear();
     _trashedItems.clear();
     
-    // Batch load (2 queries total, not N+1)
+    // Load only folders at startup (notes are lazy-loaded)
     final allFolders = await _db.getAllFolders();
-    final allNotes = await _db.getAllNotes();
     
     // Categorize folders
     for (final folder in allFolders) {
@@ -65,30 +75,79 @@ class DataRepository {
       }
     }
     
-    // Categorize notes
-    for (final note in allNotes) {
-      if (note.isDeleted) {
-        _trashedItems.add(note);
-      } else if (note.isArchived) {
-        _archivedItems.add(note);
-      } else {
-        _notesByFolder.putIfAbsent(note.folderId, () => []).add(note);
-      }
+    // Load archived/trashed notes (for trash/archive view)
+    final archivedNotes = await _db.getArchivedNotes();
+    final trashedNotes = await _db.getTrashedNotes();
+    
+    for (final note in archivedNotes) {
+      _archivedItems.add(note);
+    }
+    for (final note in trashedNotes) {
+      _trashedItems.add(note);
     }
     
-    // Sort all cached lists
-    _sortAllLists();
+    // Sort folder lists
+    _sortFolderLists();
     _isLoaded = true;
+    
+    // Pre-load root folder notes for instant display
+    await _ensureNotesLoaded(null);
+  }
+  
+  /// Lazy load notes for a specific folder from DB
+  Future<void> _ensureNotesLoaded(int? folderId) async {
+    if (_loadedNotesFolders.contains(folderId)) {
+      // Already loaded - just update LRU
+      _updateNotesLRU(folderId);
+      return;
+    }
+    
+    // Load from DB
+    final notes = await _db.getNotesForFolder(folderId);
+    _notesByFolder[folderId] = notes;
+    _loadedNotesFolders.add(folderId);
+    _notesFolderLRU.add(folderId);
+    
+    // Sort the new list
+    _sortNotesList(folderId);
+    
+    // Evict oldest if over limit
+    _evictOldNotesFolders();
+  }
+  
+  void _updateNotesLRU(int? folderId) {
+    _notesFolderLRU.remove(folderId);
+    _notesFolderLRU.add(folderId);
+  }
+  
+  void _evictOldNotesFolders() {
+    while (_notesFolderLRU.length > _maxCachedFolders) {
+      final oldestFolderId = _notesFolderLRU.removeAt(0);
+      // Only evict if no pending writes for this folder
+      final notes = _notesByFolder[oldestFolderId] ?? [];
+      final hasPending = notes.any((n) => _pendingIds.contains(n.id));
+      if (!hasPending) {
+        _notesByFolder.remove(oldestFolderId);
+        _loadedNotesFolders.remove(oldestFolderId);
+      } else {
+        // Has pending, put back at end
+        _notesFolderLRU.add(oldestFolderId);
+      }
+    }
   }
 
-  void _sortAllLists() {
+  void _sortFolderLists() {
     for (final list in _foldersByParent.values) {
       list.sort((a, b) {
         if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
         return b.position.compareTo(a.position);
       });
     }
-    for (final list in _notesByFolder.values) {
+  }
+  
+  void _sortNotesList(int? folderId) {
+    final list = _notesByFolder[folderId];
+    if (list != null) {
       list.sort((a, b) {
         if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
         return b.position.compareTo(a.position);

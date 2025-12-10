@@ -129,6 +129,106 @@ class AppDatabase {
     return maps.map((e) => Folder.fromMap(e)).toList();
   }
 
+  /// Load notes for a specific folder (for lazy loading)
+  Future<List<Note>> getNotesForFolder(int? folderId) async {
+    final db = await database;
+    
+    // Step 1: Get notes for this folder only
+    final noteMaps = await db.query(
+      'notes',
+      where: folderId == null 
+          ? 'folder_id IS NULL AND is_archived = 0 AND is_deleted = 0' 
+          : 'folder_id = ? AND is_archived = 0 AND is_deleted = 0',
+      whereArgs: folderId == null ? [] : [folderId],
+      orderBy: 'is_pinned DESC, position DESC, created_at DESC',
+    );
+    
+    if (noteMaps.isEmpty) return [];
+    
+    // Step 2: Get images for these notes
+    final noteIds = noteMaps.map((m) => m['id'] as int).toList();
+    final allImages = await db.query(
+      'note_images',
+      where: 'note_id IN (${noteIds.join(',')})',
+      orderBy: 'note_id, position ASC',
+    );
+    
+    // Step 3: Group images by note_id
+    final imagesByNote = <int, List<String>>{};
+    for (final img in allImages) {
+      final noteId = img['note_id'] as int;
+      imagesByNote.putIfAbsent(noteId, () => []).add(img['image_path'] as String);
+    }
+    
+    // Step 4: Build Note objects
+    return noteMaps.map((m) {
+      final noteId = m['id'] as int;
+      return Note.fromMap(m, images: imagesByNote[noteId] ?? []);
+    }).toList();
+  }
+
+  /// Load archived notes (for archive view)
+  Future<List<Note>> getArchivedNotes() async {
+    final db = await database;
+    
+    final noteMaps = await db.query(
+      'notes',
+      where: 'is_archived = 1 AND is_deleted = 0',
+      orderBy: 'position DESC, created_at DESC',
+    );
+    
+    if (noteMaps.isEmpty) return [];
+    
+    final noteIds = noteMaps.map((m) => m['id'] as int).toList();
+    final allImages = await db.query(
+      'note_images',
+      where: 'note_id IN (${noteIds.join(',')})',
+      orderBy: 'note_id, position ASC',
+    );
+    
+    final imagesByNote = <int, List<String>>{};
+    for (final img in allImages) {
+      final noteId = img['note_id'] as int;
+      imagesByNote.putIfAbsent(noteId, () => []).add(img['image_path'] as String);
+    }
+    
+    return noteMaps.map((m) {
+      final noteId = m['id'] as int;
+      return Note.fromMap(m, images: imagesByNote[noteId] ?? []);
+    }).toList();
+  }
+
+  /// Load trashed notes (for trash view)
+  Future<List<Note>> getTrashedNotes() async {
+    final db = await database;
+    
+    final noteMaps = await db.query(
+      'notes',
+      where: 'is_deleted = 1',
+      orderBy: 'position DESC, created_at DESC',
+    );
+    
+    if (noteMaps.isEmpty) return [];
+    
+    final noteIds = noteMaps.map((m) => m['id'] as int).toList();
+    final allImages = await db.query(
+      'note_images',
+      where: 'note_id IN (${noteIds.join(',')})',
+      orderBy: 'note_id, position ASC',
+    );
+    
+    final imagesByNote = <int, List<String>>{};
+    for (final img in allImages) {
+      final noteId = img['note_id'] as int;
+      imagesByNote.putIfAbsent(noteId, () => []).add(img['image_path'] as String);
+    }
+    
+    return noteMaps.map((m) {
+      final noteId = m['id'] as int;
+      return Note.fromMap(m, images: imagesByNote[noteId] ?? []);
+    }).toList();
+  }
+
   // ===========================================
   // TRANSACTION SUPPORT
   // ===========================================
