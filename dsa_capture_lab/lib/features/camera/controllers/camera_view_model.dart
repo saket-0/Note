@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../dashboard/providers/dashboard_state.dart';
 import '../../../shared/data/data_repository.dart';
@@ -13,6 +14,8 @@ final cameraViewModelProvider = StateNotifierProvider.autoDispose<CameraViewMode
 });
 
 // ViewModel - Uses DataRepository for cache-first operations
+// === ZERO-LATENCY INGESTION ===
+// Uses ingestImmediate() for RAM-First, Disk-Later pattern
 class CameraViewModel extends StateNotifier<BatchCameraState> {
   final Ref ref;
 
@@ -37,7 +40,7 @@ class CameraViewModel extends StateNotifier<BatchCameraState> {
       state = state.copyWith(activeBatchFolderId: newFolderId);
   }
 
-  // Instant Batch Save - OPTIMISTIC via DataRepository with CACHE PATCHING
+  // Instant Batch Save - ZERO-LATENCY via ingestImmediate()
   Future<void> captureBatchPhoto(String path, int? parentFolderId) async {
     // 1. Ensure Batch Folder Exists (Atomic Check)
     if (state.activeBatchFolderId == null) {
@@ -53,13 +56,15 @@ class CameraViewModel extends StateNotifier<BatchCameraState> {
     // Safety check
     if (state.activeBatchFolderId == null) return;
 
-    // === CACHE INJECTION: Inject bytes BEFORE UI rebuild ===
-    // This ensures 0ms delay when user navigates to the batch folder
+    // === ZERO-LATENCY INGESTION ===
+    // Read bytes and inject into RAM immediately
+    // ingestImmediate: RAM → Tier 2, decode → Tier 1, async → Disk
     try {
       final bytes = await File(path).readAsBytes();
-      _pipeline.injectBytes(path, bytes);
+      await _pipeline.ingestImmediate(path, bytes);
     } catch (e) {
-      // Non-fatal: image will load normally if injection fails
+      debugPrint('[CameraViewModel] Ingestion failed: $e');
+      // Non-fatal: image will load normally if ingestion fails
     }
 
     // 2. Create Note via repository (optimistic)
@@ -116,14 +121,17 @@ class CameraViewModel extends StateNotifier<BatchCameraState> {
     state = state.copyWith(capturedItems: [], activeBatchFolderId: null);
   }
 
-  // Single Save helper - OPTIMISTIC via DataRepository with CACHE PATCHING
+  // Single Save helper - ZERO-LATENCY via ingestImmediate()
   Future<int> saveSingle(String path, int? folderId) async {
-    // === CACHE INJECTION: Inject bytes BEFORE UI rebuild ===
+    // === ZERO-LATENCY INGESTION ===
+    // Read bytes and inject into RAM immediately  
+    // ingestImmediate: RAM → Tier 2, decode → Tier 1, async → Disk
     try {
       final bytes = await File(path).readAsBytes();
-      _pipeline.injectBytes(path, bytes);
+      await _pipeline.ingestImmediate(path, bytes);
     } catch (e) {
-      // Non-fatal: image will load normally if injection fails
+      debugPrint('[CameraViewModel] Ingestion failed: $e');
+      // Non-fatal: image will load normally if ingestion fails
     }
     
     return await _repo.createNote(

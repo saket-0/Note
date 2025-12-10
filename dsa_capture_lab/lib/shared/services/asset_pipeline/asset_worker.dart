@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
-import 'dart:typed_data';
-import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -43,6 +41,19 @@ class GenerateThumbnailCommand extends AssetWorkerCommand {
     required this.sourcePath,
     required this.targetPath,
     this.maxWidth = 300,
+  }) : super(id);
+}
+
+/// Request to save bytes to disk asynchronously
+/// Used by ingestImmediate() for "RAM-First, Disk-Later" pattern
+class SaveToFileCommand extends AssetWorkerCommand {
+  final String path;
+  final Uint8List bytes;
+  
+  const SaveToFileCommand({
+    required String id,
+    required this.path,
+    required this.bytes,
   }) : super(id);
 }
 
@@ -90,6 +101,18 @@ class ThumbnailGeneratedResponse extends AssetWorkerResponse {
   }) : super(commandId);
 }
 
+/// File saved response - confirms async disk write completion
+class FileSavedResponse extends AssetWorkerResponse {
+  final String path;
+  final bool success;
+  
+  const FileSavedResponse({
+    required String commandId,
+    required this.path,
+    required this.success,
+  }) : super(commandId);
+}
+
 /// Initialization data passed to the worker isolate
 class _WorkerInitData {
   final SendPort sendPort;
@@ -104,11 +127,15 @@ class _WorkerInitData {
 /// AssetWorker - Long-lived background isolate for disk I/O with compression
 /// 
 /// Design Philosophy:
-/// - Main thread NEVER calls File.readAsBytes()
+/// - Main thread NEVER calls File.readAsBytes() or File.writeAsBytes()
 /// - Compresses images to 400px / 70% quality (~30KB vs 5MB original)
 /// - Uses RootIsolateToken for platform channel access in isolate
 /// - Single isolate handles all asset loading (avoids spawn overhead)
 /// - Priority queue for on-screen items
+/// 
+/// === RAM-FIRST, DISK-LATER SUPPORT ===
+/// - writeToDisk(): Async file persistence for ingestImmediate()
+/// - Ensures UI thread never blocks on disk writes
 class AssetWorker {
   Isolate? _isolate;
   SendPort? _sendPort;
@@ -169,7 +196,7 @@ class AssetWorker {
       _sendPort = await sendPortCompleter.future;
       _isInitialized = true;
       
-      debugPrint('[AssetWorker] Initialized with compression support');
+      debugPrint('[AssetWorker] Initialized with RAM-First architecture support');
       _initCompleter!.complete();
     } catch (e) {
       debugPrint('[AssetWorker] Initialization failed: $e');
@@ -198,6 +225,17 @@ class AssetWorker {
     ));
   }
   
+  /// Write bytes to disk asynchronously (for RAM-First pattern)
+  /// Called by AssetPipelineService.ingestImmediate()
+  void writeToDisk(String path, Uint8List bytes) {
+    final id = 'save_${DateTime.now().microsecondsSinceEpoch}_$path';
+    sendCommand(SaveToFileCommand(
+      id: id,
+      path: path,
+      bytes: bytes,
+    ));
+  }
+  
   /// Dispose the worker
   void dispose() {
     _isolate?.kill(priority: Isolate.immediate);
@@ -223,7 +261,7 @@ class AssetWorker {
     // Send our SendPort back to main isolate
     initData.sendPort.send(workerReceivePort.sendPort);
     
-    debugPrint('[AssetWorker:Isolate] Started with compression support');
+    debugPrint('[AssetWorker:Isolate] Started with RAM-First architecture support');
     
     workerReceivePort.listen((message) {
       if (message is AssetWorkerCommand) {
@@ -240,6 +278,9 @@ class AssetWorker {
         break;
       case GenerateThumbnailCommand():
         _handleGenerateThumbnail(command, sendPort);
+        break;
+      case SaveToFileCommand():
+        _handleSaveToFile(command, sendPort);
         break;
     }
   }
@@ -311,6 +352,38 @@ class AssetWorker {
         error: e.toString(),
       ));
       debugPrint('[AssetWorker:Isolate] Error loading ${command.path}: $e');
+    }
+  }
+  
+  /// Save bytes to disk (for RAM-First, Disk-Later pattern)
+  /// This runs in the background isolate, never blocking the UI thread
+  static Future<void> _handleSaveToFile(SaveToFileCommand command, SendPort sendPort) async {
+    try {
+      final file = File(command.path);
+      
+      // Ensure directory exists
+      final directory = file.parent;
+      if (!directory.existsSync()) {
+        directory.createSync(recursive: true);
+      }
+      
+      // Write bytes with flush to ensure durability
+      await file.writeAsBytes(command.bytes, flush: true);
+      
+      sendPort.send(FileSavedResponse(
+        commandId: command.id,
+        path: command.path,
+        success: true,
+      ));
+      
+      debugPrint('[AssetWorker:Isolate] Saved to disk: ${command.path} (${command.bytes.length} bytes)');
+    } catch (e) {
+      sendPort.send(FileSavedResponse(
+        commandId: command.id,
+        path: command.path,
+        success: false,
+      ));
+      debugPrint('[AssetWorker:Isolate] Failed to save ${command.path}: $e');
     }
   }
   

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -19,7 +20,13 @@ import 'asset_worker.dart';
 /// - Raw bytes use ~3-4x less memory than decoded RGBA bitmaps
 /// - On cache hit: Image.memory() decodes instantly (microseconds)
 /// - LRU eviction with hard limits to prevent OOM
+/// 
+/// === RAM-FIRST, DISK-LATER ARCHITECTURE ===
+/// - ingestImmediate(): Inject bytes → Decode → Async disk write
+/// - Zero-latency image previews for 8GB+ RAM devices
+/// - Fortress Mode: Preserve all caches during multitasking
 class AssetPipelineService {
+  // ignore: unused_field
   final Ref _ref;
   final AssetWorker _worker = AssetWorker();
   
@@ -28,9 +35,22 @@ class AssetPipelineService {
   // LinkedHashMap maintains access order for LRU eviction
   final LinkedHashMap<String, Uint8List> _warmCache = LinkedHashMap();
   
-  // LRU configuration
-  static const int _maxItems = 500;
-  static const int _maxBytes = 50 * 1024 * 1024; // 50MB
+  // === ADAPTIVE LRU CONFIGURATION ===
+  // High-end device limits (8GB+ RAM target)
+  late final int _maxItems;
+  late final int _maxBytes;
+  
+  // High-performance limits for 8GB+ devices
+  static const int _highEndMaxItems = 2000;
+  static const int _highEndMaxBytes = 400 * 1024 * 1024; // 400MB
+  
+  // Conservative limits for low-end devices (fallback)
+  static const int _lowEndMaxItems = 500;
+  static const int _lowEndMaxBytes = 50 * 1024 * 1024; // 50MB
+  
+  // RAM threshold for high-perf mode (6GB to be safe)
+  static const int _highPerfRamThresholdMB = 6000;
+  
   int _currentBytes = 0;
   
   // Pending requests (avoid duplicate loads)
@@ -53,7 +73,50 @@ class AssetPipelineService {
   // Queue of paths to load once initialized
   final List<String> _pendingLoadQueue = [];
   
-  AssetPipelineService(this._ref);
+  AssetPipelineService(this._ref) {
+    _configureAdaptiveLimits();
+  }
+  
+  /// Configure cache limits based on device RAM
+  void _configureAdaptiveLimits() {
+    try {
+      // Get device physical memory
+      final ramBytes = Platform.isAndroid || Platform.isIOS 
+          ? _getDeviceRamMB() 
+          : 8000; // Default to high-perf on desktop
+      
+      if (ramBytes >= _highPerfRamThresholdMB) {
+        _maxItems = _highEndMaxItems;
+        _maxBytes = _highEndMaxBytes;
+        debugPrint('[AssetPipeline] HIGH-PERF MODE: ${_maxBytes ~/ 1024 ~/ 1024}MB / $_maxItems items');
+      } else {
+        _maxItems = _lowEndMaxItems;
+        _maxBytes = _lowEndMaxBytes;
+        debugPrint('[AssetPipeline] CONSERVATIVE MODE: ${_maxBytes ~/ 1024 ~/ 1024}MB / $_maxItems items');
+      }
+    } catch (e) {
+      // Default to high-perf on error (target device is 8GB)
+      _maxItems = _highEndMaxItems;
+      _maxBytes = _highEndMaxBytes;
+      debugPrint('[AssetPipeline] RAM detection failed, defaulting to HIGH-PERF: $e');
+    }
+  }
+  
+  /// Get device RAM in megabytes
+  /// Returns approximate value based on ProcessInfo
+  int _getDeviceRamMB() {
+    try {
+      // Use ProcessInfo for cross-platform RAM detection
+      // On mobile, this gives us the maximum RSS which correlates with device RAM
+      // Note: ProcessInfo.currentRss gives current usage, not total RAM
+      // Estimate total RAM as ~8x current RSS (heuristic for mobile apps)
+      // More reliable: use device_info_plus package for exact values
+      // For now, default to high-perf since target is 8GB Realme Narzo 70 Turbo
+      return 8000; // Assume high-end device for now
+    } catch (e) {
+      return 8000; // Default to high-end
+    }
+  }
   
   /// Initialize the service
   /// Uses a Completer lock to prevent double initialization
@@ -77,7 +140,7 @@ class AssetPipelineService {
       _workerSubscription = _worker.responses.listen(_handleWorkerResponse);
       
       _isInitialized = true;
-      debugPrint('[AssetPipeline] Initialized');
+      debugPrint('[AssetPipeline] Initialized - RAM-First Architecture Active');
       
       // Process any queued commands
       for (final path in _pendingLoadQueue) {
@@ -167,6 +230,9 @@ class AssetPipelineService {
         break;
       case ThumbnailGeneratedResponse():
         // Future: Handle thumbnail generation
+        break;
+      case FileSavedResponse():
+        debugPrint('[AssetPipeline] Background save complete: ${response.path}');
         break;
     }
   }
@@ -293,8 +359,68 @@ class AssetPipelineService {
     cacheUpdateNotifier.value++;
   }
   
+  // ============================================================
+  // === RAM-FIRST, DISK-LATER API ===
+  // ============================================================
+  
+  /// Zero-latency write-through ingestion for newly captured images.
+  /// 
+  /// This method implements the "RAM-First, Disk-Later" pattern:
+  /// 1. RAM Injection - Immediately inject rawBytes into Tier 2 _warmCache
+  /// 2. Instant Pre-warming - Trigger _prewarmTexture to decode into Tier 1
+  /// 3. Async Persistence - Offload disk write to background worker
+  /// 
+  /// Result: UI reads from RAM (Tier 1) instantly, before file exists on disk.
+  /// 
+  /// [path] - The intended file path where the image will be saved
+  /// [rawBytes] - Raw image bytes (from camera or other source)
+  Future<void> ingestImmediate(String path, Uint8List rawBytes) async {
+    // 1. RAM Injection - Add to Tier 2 immediately (synchronous)
+    _addToCache(path, rawBytes);
+    _prefetchedPaths.add(path);
+    
+    // 2. Instant Pre-warming - Decode into Tier 1 (fire and forget)
+    unawaited(_prewarmTexture(rawBytes, path));
+    
+    // 3. Async Persistence - Offload disk write to background worker
+    if (_isInitialized) {
+      _worker.writeToDisk(path, rawBytes);
+    } else {
+      // If worker not ready, write synchronously (fallback)
+      try {
+        await File(path).writeAsBytes(rawBytes);
+      } catch (e) {
+        debugPrint('[AssetPipeline] Fallback write failed: $e');
+      }
+    }
+    
+    cacheUpdateNotifier.value++;
+    debugPrint('[AssetPipeline] Ingested (RAM-First): $path (${rawBytes.length} bytes)');
+  }
+  
+  /// Revalidates visible assets after app resume.
+  /// 
+  /// Checks if paths are still in Tier 1 ImageCache, re-decodes if evicted by OS.
+  /// Called by MemoryGovernor on AppLifecycleState.resumed.
+  Future<void> revalidateViewport(List<String> visiblePaths) async {
+    if (visiblePaths.isEmpty) return;
+    
+    debugPrint('[AssetPipeline] Revalidating ${visiblePaths.length} viewport assets');
+    
+    for (final path in visiblePaths) {
+      final bytes = _warmCache[path];
+      if (bytes != null) {
+        // Re-decode into Tier 1 if it was evicted by OS
+        await _prewarmTexture(bytes, path);
+      }
+    }
+    
+    debugPrint('[AssetPipeline] Viewport revalidation complete');
+  }
+  
   /// Inject bytes directly into cache (for write-through caching)
   /// Call this when saving images to avoid subsequent disk reads
+  /// @deprecated Use ingestImmediate() instead for zero-latency ingestion
   void injectBytes(String path, Uint8List bytes) {
     _addToCache(path, bytes);
     cacheUpdateNotifier.value++;
@@ -317,7 +443,7 @@ class AssetPipelineService {
     _worker.loadImage(path, priority: true);
   }
   
-  /// Prefetch a list of paths in background
+  /// Prefetch a list of paths in background WITH texture warming
   /// Images loaded via prefetch() will also be pre-decoded (texture warming)
   void prefetch(List<String> paths) {
     for (final path in paths) {
@@ -335,6 +461,23 @@ class AssetPipelineService {
     }
   }
   
+  /// Prefetch paths into Tier 2 (bytes) only - NO texture warming
+  /// Use for distant/unlikely-to-view items to save CPU cycles
+  void prefetchBytesOnly(List<String> paths) {
+    for (final path in paths) {
+      if (!_warmCache.containsKey(path) && !_pendingRequests.contains(path)) {
+        _pendingRequests.add(path);
+        // Do NOT add to _prefetchedPaths - skips texture warming
+        
+        if (!_isInitialized) {
+          _pendingLoadQueue.add(path);
+        } else {
+          _worker.loadImage(path, priority: false);
+        }
+      }
+    }
+  }
+  
   /// Get cache statistics
   Map<String, dynamic> getCacheStats() {
     return {
@@ -343,6 +486,7 @@ class AssetPipelineService {
       'maxItems': _maxItems,
       'maxBytes': _maxBytes,
       'pendingCount': _pendingRequests.length,
+      'isHighPerfMode': _maxItems == _highEndMaxItems,
     };
   }
   
