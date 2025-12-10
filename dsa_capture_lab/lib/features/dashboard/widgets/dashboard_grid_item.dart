@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/domain/entities/entities.dart';
 import '../../../shared/data/data_repository.dart';
 import '../../../shared/services/folder_service.dart';
-import '../../../shared/widgets/stable_image.dart';
+import '../../../shared/widgets/smart_image.dart';
 import '../gestures/body_zone/perfect_gesture.dart';
 import '../gestures/glide_menu/glide_menu_overlay.dart' as glide;
 import 'package:share_plus/share_plus.dart';
@@ -564,11 +564,10 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
             borderRadius: BorderRadius.circular(15),
             child: Stack(
               children: [
-                StableImage(
+                SmartImage(
                   fileId: 'note_${item.id}_main',
                   path: item.imagePath!,
                   fit: BoxFit.cover,
-                  cacheWidth: 400,
                 ),
                 // Gradient label overlay
                 if (item.title.isNotEmpty)
@@ -723,12 +722,11 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
     if (images.length == 1) {
       return ClipRRect(
         borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
-        child: StableImage(
+        child: SmartImage(
           fileId: 'collage_${images[0].hashCode}',
           path: images[0], 
           fit: BoxFit.cover, 
-          height: 150, 
-          cacheWidth: 400,
+          height: 150,
         ),
       );
     } else if (images.length == 2) {
@@ -736,11 +734,10 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
          children: images.asMap().entries.map((entry) => Expanded(
            child: SizedBox(
              height: 120,
-             child: StableImage(
+             child: SmartImage(
                fileId: 'collage_${entry.value.hashCode}',
                path: entry.value, 
-               fit: BoxFit.cover, 
-               cacheWidth: 300,
+               fit: BoxFit.cover,
                height: 120,
              ),
            )
@@ -752,18 +749,17 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
           SizedBox(
             height: 100, 
             width: double.infinity, 
-            child: StableImage(
+            child: SmartImage(
               fileId: 'collage_${images[0].hashCode}',
               path: images[0], 
-              fit: BoxFit.cover, 
-              cacheWidth: 400,
+              fit: BoxFit.cover,
               height: 100,
             ),
           ),
           Row(
              children: [
-               Expanded(child: SizedBox(height: 80, child: StableImage(fileId: 'collage_${images[1].hashCode}', path: images[1], fit: BoxFit.cover, cacheWidth: 300, height: 80))),
-               Expanded(child: SizedBox(height: 80, child: StableImage(fileId: 'collage_${images[2].hashCode}', path: images[2], fit: BoxFit.cover, cacheWidth: 300, height: 80))),
+               Expanded(child: SizedBox(height: 80, child: SmartImage(fileId: 'collage_${images[1].hashCode}', path: images[1], fit: BoxFit.cover, height: 80))),
+               Expanded(child: SizedBox(height: 80, child: SmartImage(fileId: 'collage_${images[2].hashCode}', path: images[2], fit: BoxFit.cover, height: 80))),
              ],
           )
         ],
@@ -775,11 +771,10 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
         physics: const NeverScrollableScrollPhysics(),
         crossAxisCount: 2,
         childAspectRatio: 1.5,
-        children: images.take(4).map((path) => StableImage(
+        children: images.take(4).map((path) => SmartImage(
           fileId: 'collage_${path.hashCode}',
           path: path, 
-          fit: BoxFit.cover, 
-          cacheWidth: 200,
+          fit: BoxFit.cover,
         )).toList(),
       );
     }

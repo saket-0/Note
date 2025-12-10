@@ -3,7 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'features/dashboard/dashboard_screen.dart';
 import 'shared/data/data_repository.dart';
-import 'shared/services/hardware_cache_engine.dart';
+import 'shared/services/asset_pipeline/asset_pipeline_service.dart';
+import 'shared/services/asset_pipeline/memory_governor.dart';
 
 void main() {
   runApp(const ProviderScope(child: DsaCaptureApp()));
@@ -34,8 +35,9 @@ class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
     // Initialize DataRepository (loads cache from DB)
     final repo = ref.read(dataRepositoryProvider);
     _initFuture = repo.initialize().then((_) {
-      // Pre-warm Root folder cache after repo is ready
-      ref.read(hardwareCacheEngineProvider).preWarmFolders([null]); // null = root
+      // Initialize the new asset pipeline and memory governor
+      ref.read(assetPipelineServiceProvider).initialize();
+      ref.read(memoryGovernorProvider); // Just reading initializes it
     });
   }
 
