@@ -2,8 +2,11 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
+import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 
 /// Commands sent to the AssetWorker isolate
 sealed class AssetWorkerCommand {
@@ -11,15 +14,21 @@ sealed class AssetWorkerCommand {
   const AssetWorkerCommand(this.id);
 }
 
-/// Request to load an image file from disk
+/// Request to load and compress an image file from disk
 class LoadImageCommand extends AssetWorkerCommand {
   final String path;
   final bool priority;
+  final int targetWidth;
+  final int targetHeight;
+  final int quality;
   
   const LoadImageCommand({
     required String id,
     required this.path,
     this.priority = false,
+    this.targetWidth = 400,
+    this.targetHeight = 400,
+    this.quality = 70,
   }) : super(id);
 }
 
@@ -47,11 +56,13 @@ sealed class AssetWorkerResponse {
 class ImageLoadedResponse extends AssetWorkerResponse {
   final String path;
   final Uint8List bytes;
+  final bool wasCompressed;
   
   const ImageLoadedResponse({
     required String commandId,
     required this.path,
     required this.bytes,
+    this.wasCompressed = false,
   }) : super(commandId);
 }
 
@@ -79,11 +90,23 @@ class ThumbnailGeneratedResponse extends AssetWorkerResponse {
   }) : super(commandId);
 }
 
-/// AssetWorker - Long-lived background isolate for disk I/O
+/// Initialization data passed to the worker isolate
+class _WorkerInitData {
+  final SendPort sendPort;
+  final RootIsolateToken? rootIsolateToken;
+  
+  const _WorkerInitData({
+    required this.sendPort,
+    required this.rootIsolateToken,
+  });
+}
+
+/// AssetWorker - Long-lived background isolate for disk I/O with compression
 /// 
 /// Design Philosophy:
 /// - Main thread NEVER calls File.readAsBytes()
-/// - Uses synchronous file APIs inside isolate for maximum throughput
+/// - Compresses images to 400px / 70% quality (~30KB vs 5MB original)
+/// - Uses RootIsolateToken for platform channel access in isolate
 /// - Single isolate handles all asset loading (avoids spawn overhead)
 /// - Priority queue for on-screen items
 class AssetWorker {
@@ -121,9 +144,15 @@ class AssetWorker {
     try {
       _receivePort = ReceivePort();
       
+      // Capture the RootIsolateToken for platform channel access in isolate
+      final rootIsolateToken = RootIsolateToken.instance;
+      
       _isolate = await Isolate.spawn(
         _workerEntryPoint,
-        _receivePort!.sendPort,
+        _WorkerInitData(
+          sendPort: _receivePort!.sendPort,
+          rootIsolateToken: rootIsolateToken,
+        ),
       );
       
       // First message is the worker's SendPort
@@ -140,7 +169,7 @@ class AssetWorker {
       _sendPort = await sendPortCompleter.future;
       _isInitialized = true;
       
-      debugPrint('[AssetWorker] Initialized and ready');
+      debugPrint('[AssetWorker] Initialized with compression support');
       _initCompleter!.complete();
     } catch (e) {
       debugPrint('[AssetWorker] Initialization failed: $e');
@@ -159,7 +188,7 @@ class AssetWorker {
     _sendPort!.send(command);
   }
   
-  /// Load an image file (convenience method)
+  /// Load an image file with compression (convenience method)
   void loadImage(String path, {bool priority = false}) {
     final id = '${DateTime.now().microsecondsSinceEpoch}_$path';
     sendCommand(LoadImageCommand(
@@ -183,17 +212,22 @@ class AssetWorker {
   }
   
   /// Entry point for the worker isolate
-  static void _workerEntryPoint(SendPort mainSendPort) {
+  static void _workerEntryPoint(_WorkerInitData initData) {
+    // Initialize platform channel access in this isolate
+    if (initData.rootIsolateToken != null) {
+      BackgroundIsolateBinaryMessenger.ensureInitialized(initData.rootIsolateToken!);
+    }
+    
     final workerReceivePort = ReceivePort();
     
     // Send our SendPort back to main isolate
-    mainSendPort.send(workerReceivePort.sendPort);
+    initData.sendPort.send(workerReceivePort.sendPort);
     
-    debugPrint('[AssetWorker:Isolate] Started');
+    debugPrint('[AssetWorker:Isolate] Started with compression support');
     
     workerReceivePort.listen((message) {
       if (message is AssetWorkerCommand) {
-        _handleCommand(message, mainSendPort);
+        _handleCommand(message, initData.sendPort);
       }
     });
   }
@@ -210,12 +244,11 @@ class AssetWorker {
     }
   }
   
-  /// Load image from disk (SYNCHRONOUS for max throughput in isolate)
-  static void _handleLoadImage(LoadImageCommand command, SendPort sendPort) {
+  /// Load and compress image from disk
+  static Future<void> _handleLoadImage(LoadImageCommand command, SendPort sendPort) async {
     try {
       final file = File(command.path);
       
-      // SYNCHRONOUS read - safe in isolate, maximum throughput
       if (!file.existsSync()) {
         sendPort.send(AssetErrorResponse(
           commandId: command.id,
@@ -226,15 +259,51 @@ class AssetWorker {
         return;
       }
       
-      final bytes = file.readAsBytesSync();
+      // Check file extension to determine if we should compress
+      final extension = command.path.split('.').last.toLowerCase();
+      final isCompressibleImage = ['jpg', 'jpeg', 'png', 'webp', 'heic'].contains(extension);
+      
+      Uint8List bytes;
+      bool wasCompressed = false;
+      
+      if (isCompressibleImage) {
+        // Try to compress the image
+        try {
+          final compressedBytes = await FlutterImageCompress.compressWithFile(
+            command.path,
+            minWidth: command.targetWidth,
+            minHeight: command.targetHeight,
+            quality: command.quality,
+            format: CompressFormat.jpeg,
+          );
+          
+          if (compressedBytes != null && compressedBytes.isNotEmpty) {
+            bytes = compressedBytes;
+            wasCompressed = true;
+            debugPrint('[AssetWorker:Isolate] Compressed: ${command.path} (${bytes.length} bytes)');
+          } else {
+            // Compression returned null, fall back to raw read
+            bytes = file.readAsBytesSync();
+            debugPrint('[AssetWorker:Isolate] Compression null, raw read: ${command.path}');
+          }
+        } catch (compressError) {
+          // Compression failed, fall back to raw read
+          debugPrint('[AssetWorker:Isolate] Compression failed, falling back: $compressError');
+          bytes = file.readAsBytesSync();
+        }
+      } else {
+        // Not a compressible image (gif, bmp, etc), read raw
+        bytes = file.readAsBytesSync();
+        debugPrint('[AssetWorker:Isolate] Non-image/GIF, raw read: ${command.path}');
+      }
       
       sendPort.send(ImageLoadedResponse(
         commandId: command.id,
         path: command.path,
         bytes: bytes,
+        wasCompressed: wasCompressed,
       ));
       
-      debugPrint('[AssetWorker:Isolate] Disk Read: ${command.path} (${bytes.length} bytes)');
     } catch (e) {
       sendPort.send(AssetErrorResponse(
         commandId: command.id,
@@ -247,8 +316,6 @@ class AssetWorker {
   
   /// Generate thumbnail (placeholder for future implementation)
   static void _handleGenerateThumbnail(GenerateThumbnailCommand command, SendPort sendPort) {
-    // TODO: Implement thumbnail generation
-    // This would use image package to resize
     debugPrint('[AssetWorker:Isolate] Thumbnail generation not yet implemented');
     
     sendPort.send(AssetErrorResponse(

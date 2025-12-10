@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/ui/gradient_background.dart';
 import '../../core/ui/page_routes.dart';
-import '../../shared/services/smooth_cache_engine.dart';
+import '../../shared/services/asset_pipeline/asset_prefetcher.dart';
 import '../camera/camera_screen.dart';
 import '../editor/editor_screen.dart';
 import 'controllers/dashboard_controller.dart';
@@ -26,9 +26,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
   
   @override
   Widget build(BuildContext context) {
-    // SmoothCacheEngine V3 - "Smooth-Stream" background watcher
-    // Yield-based loading respects 60fps frame budget
-    ref.watch(smoothCacheEngineProvider(context));
+    // Asset Prefetcher - Predictive loading engine
+    // Watches folder changes and prefetches images before navigation completes
+    ref.watch(assetPrefetcherProvider);
 
     final currentFolderId = ref.watch(currentFolderProvider);
     final currentFilter = ref.watch(activeFilterProvider);
