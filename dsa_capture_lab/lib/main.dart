@@ -26,18 +26,16 @@ class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
   void initState() {
     super.initState();
     
-    // === INDUSTRY GRADE 10/10 PERFORMANCE ARCHITECTURE ===
-    // Target: Realme Narzo 70 Turbo (8GB RAM, ~2GB free for app)
-    
-    // === MEMORY-SAFE CACHE LIMITS ===
-    // Tuned for 2GB free heap:
-    // - ImageCache (Tier 1): 1GB
+    // === TITANIUM CACHE CONFIGURATION ===
+    // Tuned for 8GB RAM devices (Realme Narzo 70 Turbo)
+    // Conservative limits that leave room for other app operations:
+    // - ImageCache (Tier 1): 500MB
     // - TextureRegistry (Tier 0): 350MB  
     // - WarmCache (Tier 2): 200MB
-    // - Total: ~1.5GB, leaves room for Dart heap + overhead
+    // - Total: ~1GB, leaves ample headroom for Dart heap + overhead
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      PaintingBinding.instance.imageCache.maximumSizeBytes = 1024 * 1024 * 1024; // 1GB
-      PaintingBinding.instance.imageCache.maximumSize = 2000; // 2000 images
+      PaintingBinding.instance.imageCache.maximumSizeBytes = 500 * 1024 * 1024; // 500MB
+      PaintingBinding.instance.imageCache.maximumSize = 1000; // 1000 images
     });
     
     // === INITIALIZATION CHAIN ===

@@ -520,6 +520,39 @@ class AssetPipelineService {
   }
   
   // ============================================================
+  // === TITANIUM CACHE: GENTLE MEMORY MANAGEMENT ===
+  // ============================================================
+  
+  /// Titanium Cache: Gentle memory trim for OS memory pressure
+  /// 
+  /// Called by MemoryGovernor on didHaveMemoryPressure.
+  /// Strategy: Evict 50% of Tier 0 (decoded textures) to satisfy OS,
+  /// but NEVER touch Tier 2 (compressed bytes) - they're too small
+  /// to matter and crucial for instant resume (<100ms decode vs. disk read).
+  /// 
+  /// MEMORY SAFETY: Does NOT call dispose() on ui.Image objects.
+  void trimMemory() {
+    if (_textureRegistry.isEmpty) {
+      debugPrint('[AssetPipeline] trimMemory: No textures to trim');
+      return;
+    }
+    
+    final initialCount = _textureRegistry.length;
+    final initialBytes = _textureBytes;
+    final targetEvictions = (initialCount / 2).ceil();
+    
+    debugPrint('[AssetPipeline] trimMemory: Evicting $targetEvictions of $initialCount textures');
+    
+    for (int i = 0; i < targetEvictions && _textureRegistry.isNotEmpty; i++) {
+      _evictOldestTexture();
+    }
+    
+    cacheUpdateNotifier.value++;
+    debugPrint('[AssetPipeline] trimMemory complete: ${_textureRegistry.length} textures remaining '
+        '(freed ${(initialBytes - _textureBytes) ~/ 1024 ~/ 1024}MB, now ${_textureBytes ~/ 1024 ~/ 1024}MB)');
+  }
+  
+  // ============================================================
   // === RAM-FIRST, DISK-LATER API ===
   // ============================================================
   

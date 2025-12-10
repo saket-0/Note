@@ -61,27 +61,27 @@ class MemoryGovernor with WidgetsBindingObserver {
   
   @override
   void didHaveMemoryPressure() {
-    debugPrint('[MemoryGovernor] ⚠️ Memory pressure detected!');
+    debugPrint('[MemoryGovernor] ⚠️ Memory pressure - Titanium Cache gentle trim');
     
-    // === GC-SAFE CACHE CLEARING ===
-    // Since we removed dispose() calls from AssetPipelineService,
-    // clearing the cache is now safe even if images are displayed.
-    // The cache is cleared (future lookups will reload) but
-    // currently displayed images survive until GC collects them.
+    // === TITANIUM CACHE: GENTLE TRIM POLICY ===
+    // 
+    // Key insight: Background state is NOT a reason to clear memory.
+    // The OS sent didHaveMemoryPressure, so we respond proportionally.
+    // 
+    // Strategy:
+    // - Only evict Tier 0 (decoded textures) to free GPU memory
+    // - NEVER evict Tier 2 (compressed bytes) - they're:
+    //   * Too small to matter (3-4x more efficient than decoded)
+    //   * Crucial for instant resume (<100ms decode vs. slow disk read)
+    // 
+    // Result: App survives multitasking with zero UI latency on resume.
+    // Worst case: Textures re-decode from RAM bytes in <100ms.
+    // Best case: Textures still present, 0ms delay.
     try {
       final pipeline = _ref.read(assetPipelineServiceProvider);
-      
-      if (_isAppInBackground) {
-        // App in background - full cache clear
-        debugPrint('[MemoryGovernor] App in background - clearing all caches');
-        pipeline.clearCache();
-      } else {
-        // App in foreground - partial eviction to preserve UX
-        debugPrint('[MemoryGovernor] App in foreground - partial eviction');
-        _evictByFolderContext(aggressive: false);
-      }
+      pipeline.trimMemory();
     } catch (e) {
-      debugPrint('[MemoryGovernor] Cache eviction failed: $e');
+      debugPrint('[MemoryGovernor] Trim failed: $e');
     }
   }
   
