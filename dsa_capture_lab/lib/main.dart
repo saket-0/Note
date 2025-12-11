@@ -3,10 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'features/dashboard/dashboard_screen.dart';
 import 'features/dashboard/providers/dashboard_state.dart';
-import 'shared/data/data_repository.dart';
+import 'shared/database/drift/app_database.dart';
 import 'shared/services/asset_pipeline/asset_pipeline_service.dart';
 import 'shared/services/asset_pipeline/memory_governor.dart';
 import 'shared/services/hydrated_state.dart';
+import 'shared/services/image_optimization_service.dart';
 
 void main() {
   runApp(const ProviderScope(child: DsaCaptureApp()));
@@ -26,23 +27,18 @@ class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
   void initState() {
     super.initState();
     
-    // === TITANIUM CACHE CONFIGURATION ===
-    // Tuned for 8GB RAM devices (Realme Narzo 70 Turbo)
-    // Conservative limits that leave room for other app operations:
-    // - ImageCache (Tier 1): 500MB
-    // - TextureRegistry (Tier 0): 350MB  
-    // - WarmCache (Tier 2): 200MB
-    // - Total: ~1GB, leaves ample headroom for Dart heap + overhead
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      PaintingBinding.instance.imageCache.maximumSizeBytes = 500 * 1024 * 1024; // 500MB
-      PaintingBinding.instance.imageCache.maximumSize = 1000; // 1000 images
-    });
+    // === MEMORY GOVERNANCE ===
+    // Let the OS manage image cache sizing.
+    // Flutter's default ImageCache is well-tuned for most devices.
+    // Manual limits cause premature eviction and re-decoding jank.
+    // (Removed "Titanium Cache Configuration" block)
     
     // === INITIALIZATION CHAIN ===
     // 1. Load Phoenix state (persisted session)
-    // 2. Initialize DataRepository (eager load ALL data)
-    // 3. Restore navigation state from Phoenix
-    // 4. Initialize asset pipeline and memory governor
+    // 2. Initialize Drift database (background isolate)
+    // 3. Initialize image optimization service
+    // 4. Restore navigation state from Phoenix
+    // 5. Initialize asset pipeline and memory governor
     _initFuture = _initialize();
   }
   
@@ -50,21 +46,26 @@ class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
     // 1. Load Phoenix state FIRST (fast, from SharedPreferences)
     final phoenixState = await HydratedState.load();
     
-    // 2. Initialize DataRepository (eager load ALL folders + notes)
-    final repo = ref.read(dataRepositoryProvider);
-    await repo.initialize();
+    // 2. Initialize Drift database (runs in background isolate)
+    // Just reading the provider triggers lazy initialization
+    final db = ref.read(driftDatabaseProvider);
+    debugPrint('[App] Drift database initialized (background isolate)');
     
-    // 3. Restore navigation state from Phoenix
+    // 3. Initialize image optimization service
+    await ref.read(imageOptimizationServiceProvider).initialize();
+    debugPrint('[App] Image optimization service initialized');
+    
+    // 4. Restore navigation state from Phoenix
     if (phoenixState.currentFolderId != null) {
       ref.read(currentFolderProvider.notifier).state = phoenixState.currentFolderId;
       debugPrint('[Phoenix] Restored to folder: ${phoenixState.currentFolderId}');
     }
     
-    // 4. Initialize asset pipeline and memory governor
+    // 5. Initialize asset pipeline and memory governor
     await ref.read(assetPipelineServiceProvider).initialize();
     ref.read(memoryGovernorProvider); // Just reading initializes it
     
-    debugPrint('[App] Initialization complete - Industry Grade 10/10 ready');
+    debugPrint('[App] Initialization complete - Drift + Reactive Streams ready');
   }
 
   @override
@@ -116,8 +117,7 @@ class _DsaCaptureAppState extends ConsumerState<DsaCaptureApp> {
                         FilledButton(
                           onPressed: () { 
                              setState(() {
-                                final repo = ref.read(dataRepositoryProvider);
-                                _initFuture = repo.initialize();
+                                _initFuture = _initialize();
                              });
                           },
                           child: const Text("Retry"),

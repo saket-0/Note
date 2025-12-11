@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../shared/data/data_repository.dart';
-import '../../../shared/domain/entities/entities.dart';
+import '../../../shared/data/notes_repository.dart';
+import '../../../shared/database/drift/app_database.dart';
 import '../controllers/dashboard_controller.dart';
 import '../providers/dashboard_state.dart';
 
@@ -112,8 +112,7 @@ class DashboardAppBar extends ConsumerWidget implements PreferredSizeWidget {
   }
 
   void _showSearchDialog(BuildContext context, WidgetRef ref) {
-    final repo = ref.read(dataRepositoryProvider);
-    final allNotes = repo.getAllNotes();
+    final repo = ref.read(notesRepositoryProvider);
     final searchController = TextEditingController();
 
     showModalBottomSheet(
@@ -123,16 +122,21 @@ class DashboardAppBar extends ConsumerWidget implements PreferredSizeWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setState) {
-          final query = searchController.text.toLowerCase();
-          final filtered = query.isEmpty
-              ? <Note>[]
-              : allNotes
-                  .where((n) =>
-                      n.title.toLowerCase().contains(query) ||
-                      n.content.toLowerCase().contains(query))
-                  .toList();
+      builder: (ctx) => FutureBuilder<List<Note>>(
+        future: repo.getNotesForFolder(null), // Get all notes from root
+        builder: (context, snapshot) {
+          final allNotes = snapshot.data ?? [];
+          
+          return StatefulBuilder(
+            builder: (context, setState) {
+              final query = searchController.text.toLowerCase();
+              final filtered = query.isEmpty
+                  ? <Note>[]
+                  : allNotes
+                      .where((n) =>
+                          n.title.toLowerCase().contains(query) ||
+                          n.content.toLowerCase().contains(query))
+                      .toList();
 
           return DraggableScrollableSheet(
             initialChildSize: 0.9,
@@ -227,8 +231,11 @@ class DashboardAppBar extends ConsumerWidget implements PreferredSizeWidget {
               ],
             ),
           );
-        },
-      ),
-    );
+            }, // StatefulBuilder builder
+          );  // StatefulBuilder
+        }, // FutureBuilder builder
+      ), // FutureBuilder
+    );  // showModalBottomSheet
   }
 }
+

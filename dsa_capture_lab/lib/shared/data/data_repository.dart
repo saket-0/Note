@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../database/app_database.dart';
-import '../domain/entities/entities.dart';
+import 'package:drift/drift.dart';
+import '../database/drift/app_database.dart';
 import '../../features/dashboard/providers/dashboard_state.dart';
 import '../services/layout_service.dart';
 
@@ -72,11 +72,10 @@ class DataRepository {
     }
     
     // === EAGER LOAD ALL NOTES (Isolate-parsed for UI thread freedom) ===
-    // Step 1: Fetch raw data on main thread (I/O bound, fast)
-    final rawNotes = await _db.getAllNotesWithPrimaryImageRaw();
-    
-    // Step 2: Parse Note objects in isolate (CPU bound, offloaded)
-    final allNotes = await compute(_parseNotesInIsolate, rawNotes);
+    // Load all folders and notes (Drift - EAGER LOAD)
+    // The `folders` variable here is redundant as `allFolders` is already loaded above.
+    // Assuming the intent is to load notes directly.
+    final allNotes = await _db.getAllNotes(); // Used to be getAllNotesWithPrimaryImageRaw
     
     // Step 3: Categorize into buckets (fast, main thread)
     for (final note in allNotes) {
@@ -99,11 +98,7 @@ class DataRepository {
   
   /// Runs in a separate isolate - parses raw Map to Note objects
   /// Static top-level function required by compute()
-  static List<Note> _parseNotesInIsolate(List<Map<String, dynamic>> rawNotes) {
-    return rawNotes.map((m) => Note.fromMap(m, images: 
-      m['primary_image'] != null ? [m['primary_image'] as String] : []
-    )).toList();
-  }
+
   
   /// Sort ALL notes lists (called once at startup)
   void _sortAllNotesLists() {
@@ -135,13 +130,10 @@ class DataRepository {
   }
 
   void _notifyChange() {
-    // Increment version counter to trigger provider rebuilds
-    final newVersion = _ref.read(dataVersionProvider.notifier).state + 1;
-    _ref.read(dataVersionProvider.notifier).state = newVersion;
-    print('[REPO] _notifyChange: version now = $newVersion');
-    
-    // Force invalidation of content providers to ensure fresh data
-    _ref.invalidate(activeContentProvider);
+    // NOTE: With Drift migration, this is now a no-op.
+    // Drift streams auto-update the UI when data changes.
+    // This method is kept for backward compatibility during migration.
+    print('[REPO] _notifyChange: (deprecated - using Drift streams now)');
   }
 
   // ===========================================
@@ -193,7 +185,8 @@ class DataRepository {
     final paths = <String>[];
     for (final note in notes) {
       if (note.imagePath != null) paths.add(note.imagePath!);
-      paths.addAll(note.images);
+      // Note: Drift migration removed embedded 'images' list.
+      // Additional images are in NoteImages table, not eagerly loaded here.
     }
     return paths;
   }
@@ -228,6 +221,9 @@ class DataRepository {
       parentId: parentId,
       createdAt: DateTime.now(),
       position: newPos,
+      isPinned: false,
+      isArchived: false,
+      isDeleted: false,
     );
     
     _addFolderToCache(tempFolder);
@@ -236,7 +232,7 @@ class DataRepository {
     
     // Persist to DB
     try {
-      final realId = await _db.createFolder(name, parentId, position: newPos);
+      final realId = await _db.createFolder(name: name, parentId: parentId, position: newPos);
       _resolveTempId(tempId, realId, isFolder: true);
       _notifyChange(); // Notify UI to rebuild with real IDs
       return realId;
@@ -279,7 +275,7 @@ class DataRepository {
       title: title.isEmpty ? 'Untitled' : title,
       content: content,
       imagePath: imagePath,
-      images: images,
+      // images: images, // Drift Note doesn't support list of images
       fileType: fileType,
       folderId: folderId,
       createdAt: DateTime.now(),
@@ -287,6 +283,8 @@ class DataRepository {
       isPinned: isPinned,
       isChecklist: isChecklist,
       position: newPos,
+      isArchived: false,
+      isDeleted: false,
     );
     
     _addNoteToCache(tempNote);
@@ -368,7 +366,7 @@ class DataRepository {
     _notifyChange();
     
     if (id > 0) {
-      await _db.deleteNote(id, permanent: permanent, unpin: !permanent);
+      await _db.deleteNote(id, permanent: permanent);
     }
   }
 
@@ -387,7 +385,7 @@ class DataRepository {
     _notifyChange();
     
     if (id > 0) {
-      await _db.deleteFolder(id, permanent: permanent, unpin: !permanent);
+      await _db.deleteFolder(id, permanent: permanent);
     }
   }
 
@@ -403,7 +401,7 @@ class DataRepository {
         _addFolderToCache(item.copyWith(isArchived: false, isDeleted: false));
       }
       _notifyChange();
-      if (item.id > 0) await _db.archiveItem(item.id, 'folder', archive, unpin: archive);
+      if (item.id > 0) await _db.archiveFolder(item.id, archive);
     } else if (item is Note) {
       _removeNoteFromCache(item.id);
       if (archive) {
@@ -413,7 +411,7 @@ class DataRepository {
         _addNoteToCache(item.copyWith(isArchived: false, isDeleted: false));
       }
       _notifyChange();
-      if (item.id > 0) await _db.archiveItem(item.id, 'note', archive, unpin: archive);
+      if (item.id > 0) await _db.archiveNote(item.id, archive);
     }
   }
 
@@ -425,11 +423,11 @@ class DataRepository {
     if (item is Folder) {
       _addFolderToCache(item.copyWith(isArchived: false, isDeleted: false));
       _notifyChange();
-      if (item.id > 0) await _db.restoreItem(item.id, 'folder');
+      if (item.id > 0) await _db.restoreFolder(item.id);
     } else if (item is Note) {
       _addNoteToCache(item.copyWith(isArchived: false, isDeleted: false));
       _notifyChange();
-      if (item.id > 0) await _db.restoreItem(item.id, 'note');
+      if (item.id > 0) await _db.restoreNote(item.id);
     }
   }
 
@@ -444,7 +442,7 @@ class DataRepository {
 
       // Unpin when moving to a different folder
       final updatedNote = note.copyWith(
-        folderId: targetFolderId,
+        folderId: Value(targetFolderId),
         position: newPos,
         isPinned: false,
       );
@@ -456,7 +454,7 @@ class DataRepository {
       // Update full note to persist folderId, position, and isPinned
       if (noteId > 0) {
         try {
-          await _db.moveNote(noteId, targetFolderId, newPosition: newPos, unpin: true);
+          await _db.moveNote(noteId, targetFolderId, newPosition: newPos);
         } catch (e) {
           // Error moving note in DB - cache already updated optimistically
         }
@@ -476,7 +474,7 @@ class DataRepository {
 
       // Unpin when moving to a different folder
       final updatedFolder = folder.copyWith(
-        parentId: targetParentId,
+        parentId: Value(targetParentId),
         position: newPos,
         isPinned: false,
       );
@@ -487,7 +485,7 @@ class DataRepository {
 
       if (folderId > 0) {
         try {
-          await _db.moveFolder(folderId, targetParentId, newPosition: newPos, unpin: true);
+          await _db.moveFolder(folderId, targetParentId, newPosition: newPos);
         } catch (e) {
           print('Error moving folder: $e');
         }
@@ -631,11 +629,11 @@ class DataRepository {
       
       if (item is Folder) {
         _removeFolderFromCache(item.id);
-        _addFolderToCache(item.copyWith(parentId: targetFolderId, position: newPos));
+        _addFolderToCache(item.copyWith(parentId: Value(targetFolderId), position: newPos));
         if (item.id > 0) dbUpdates.add((id: item.id, type: 'folder', position: newPos));
       } else if (item is Note) {
         _removeNoteFromCache(item.id);
-        _addNoteToCache(item.copyWith(folderId: targetFolderId, position: newPos));
+        _addNoteToCache(item.copyWith(folderId: Value(targetFolderId), position: newPos));
         if (item.id > 0) dbUpdates.add((id: item.id, type: 'note', position: newPos));
       }
     }
@@ -753,6 +751,7 @@ class DataRepository {
             position: folder.position,
             isArchived: folder.isArchived,
             isDeleted: folder.isDeleted,
+            isPinned: folder.isPinned,
           );
           return;
         }
@@ -767,7 +766,7 @@ class DataRepository {
             title: note.title,
             content: note.content,
             imagePath: note.imagePath,
-            images: note.images,
+            // images: note.images,
             fileType: note.fileType,
             folderId: note.folderId,
             createdAt: note.createdAt,
@@ -800,6 +799,6 @@ class DataRepository {
 
 // === PROVIDER ===
 final dataRepositoryProvider = Provider<DataRepository>((ref) {
-  final db = ref.watch(dbProvider);
+  final db = ref.watch(driftDatabaseProvider);
   return DataRepository(db, ref);
 });

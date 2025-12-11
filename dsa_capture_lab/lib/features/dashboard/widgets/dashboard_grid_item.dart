@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../shared/domain/entities/entities.dart';
-import '../../../shared/data/data_repository.dart';
+import '../../../shared/database/drift/app_database.dart';
+import '../../../shared/data/notes_repository.dart';
 import '../../../shared/services/folder_service.dart';
 import '../../../shared/widgets/smart_image.dart';
 import '../gestures/body_zone/perfect_gesture.dart';
@@ -190,16 +190,16 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
   
   void _handlePin() async {
     final item = widget.item;
-    final repo = ref.read(dataRepositoryProvider);
+    final repo = ref.read(notesRepositoryProvider);
     
     debugPrint('[DEBUG] _handlePin called for: ${item.runtimeType}, id: ${item.id}');
     
     if (item is Note) {
       debugPrint('[DEBUG] Toggling Note pin: ${item.isPinned} -> ${!item.isPinned}');
-      await repo.updateNote(item.copyWith(isPinned: !item.isPinned));
+      await repo.updateNoteFields(item.id, isPinned: !item.isPinned);
     } else if (item is Folder) {
       debugPrint('[DEBUG] Toggling Folder pin: ${item.isPinned} -> ${!item.isPinned}');
-      await repo.updateFolder(item.copyWith(isPinned: !item.isPinned));
+      await repo.updateFolderFields(item.id, isPinned: !item.isPinned);
     }
     
     debugPrint('[DEBUG] _handlePin completed');
@@ -255,11 +255,11 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
               final newName = controller.text.trim();
               if (newName.isNotEmpty) {
                 Navigator.pop(dialogContext);
-                final repo = ref.read(dataRepositoryProvider);
+                final repo = ref.read(notesRepositoryProvider);
                 if (item is Folder) {
-                  await repo.updateFolder(item.copyWith(name: newName));
+                  await repo.updateFolderFields(item.id, name: newName);
                 } else if (item is Note) {
-                  await repo.updateNote(item.copyWith(title: newName));
+                  await repo.updateNoteFields(item.id, title: newName);
                 }
               }
             },
@@ -495,7 +495,7 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
       bgColor = Colors.blueAccent.withOpacity(0.1);
     }
 
-    Widget contentBody;
+    Widget contentBody = const SizedBox.shrink(); // Default fallback
     
     if (item is Folder) {
       contentBody = Padding(
@@ -516,94 +516,57 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
       );
     } else { // Note
 
-       // 1. IMAGE COLLAGE (Multi-Image)
-       if (item.images.isNotEmpty) {
-          contentBody = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildImageCollage(item.images),
-              if (item.title.isNotEmpty || item.content.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(12.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (item.title.isNotEmpty)
-                        Text(
+       // IMAGE NOTE: Use thumbnailPath (faster) or imagePath for grid display
+       // Note: Multi-image collage removed since images are now in separate table
+       if (item.fileType == 'image' || item.imagePath != null || item.thumbnailPath != null) {
+          // Use thumbnail for grid (faster loading), fallback to original
+          final displayPath = item.thumbnailPath ?? item.imagePath;
+          if (displayPath != null) {
+            contentBody = ClipRRect(
+              borderRadius: BorderRadius.circular(15),
+              child: Stack(
+                children: [
+                  SmartImage(
+                    fileId: 'note_${item.id}_thumb',
+                    path: displayPath,
+                    fit: BoxFit.cover,
+                  ),
+                  // Gradient label overlay
+                  if (item.title.isNotEmpty)
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Colors.transparent,
+                              Colors.black.withOpacity(0.7),
+                            ],
+                          ),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+                        child: Text(
                           item.title,
-                          style: TextStyle(
-                            color: (item.color != 0) ? Colors.black87 : Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                      if (item.content.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          item.content,
-                          style: TextStyle(
-                            color: (item.color != 0) ? Colors.black54 : Colors.white70,
-                            fontSize: 12,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ]
-                    ],
-                  ),
-                )
-            ],
-          );
-       }
-       // 2. SINGLE IMAGE (Legacy or Single)
-       else if (item.fileType == 'image' && item.imagePath != null) {
-          contentBody = ClipRRect(
-            borderRadius: BorderRadius.circular(15),
-            child: Stack(
-              children: [
-                SmartImage(
-                  fileId: 'note_${item.id}_main',
-                  path: item.imagePath!,
-                  fit: BoxFit.cover,
-                ),
-                // Gradient label overlay
-                if (item.title.isNotEmpty)
-                  Positioned(
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            Colors.transparent,
-                            Colors.black.withOpacity(0.7),
-                          ],
-                        ),
-                      ),
-                      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 10),
-                      child: Text(
-                        item.title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                  ),
-              ],
-            ),
-          );
-       } 
-       // 3. CHECKLIST
+                ],
+              ),
+            );
+          }
+       }
+       // CHECKLIST
        else if (item.isChecklist) {
            contentBody = Padding(
              padding: const EdgeInsets.all(12.0),
@@ -716,68 +679,6 @@ class _DashboardGridItemState extends ConsumerState<DashboardGridItem> {
           ),
       ],
     );
-  }
-
-  Widget _buildImageCollage(List<String> images) {
-    if (images.length == 1) {
-      return ClipRRect(
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
-        child: SmartImage(
-          fileId: 'collage_${images[0].hashCode}',
-          path: images[0], 
-          fit: BoxFit.cover, 
-          height: 150,
-        ),
-      );
-    } else if (images.length == 2) {
-      return Row(
-         children: images.asMap().entries.map((entry) => Expanded(
-           child: SizedBox(
-             height: 120,
-             child: SmartImage(
-               fileId: 'collage_${entry.value.hashCode}',
-               path: entry.value, 
-               fit: BoxFit.cover,
-               height: 120,
-             ),
-           )
-         )).toList(),
-      );
-    } else if (images.length == 3) {
-      return Column(
-        children: [
-          SizedBox(
-            height: 100, 
-            width: double.infinity, 
-            child: SmartImage(
-              fileId: 'collage_${images[0].hashCode}',
-              path: images[0], 
-              fit: BoxFit.cover,
-              height: 100,
-            ),
-          ),
-          Row(
-             children: [
-               Expanded(child: SizedBox(height: 80, child: SmartImage(fileId: 'collage_${images[1].hashCode}', path: images[1], fit: BoxFit.cover, height: 80))),
-               Expanded(child: SizedBox(height: 80, child: SmartImage(fileId: 'collage_${images[2].hashCode}', path: images[2], fit: BoxFit.cover, height: 80))),
-             ],
-          )
-        ],
-      );
-    } else {
-       // 4 or more
-      return GridView.count(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        crossAxisCount: 2,
-        childAspectRatio: 1.5,
-        children: images.take(4).map((path) => SmartImage(
-          fileId: 'collage_${path.hashCode}',
-          path: path, 
-          fit: BoxFit.cover,
-        )).toList(),
-      );
-    }
   }
 
   List<Widget> _buildChecklistPreview(Note note, int maxLines, Color textColor) {

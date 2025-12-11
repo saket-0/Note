@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:mime/mime.dart';
-import '../../../shared/data/data_repository.dart';
-import '../../../shared/domain/entities/entities.dart';
+import '../../../shared/data/notes_repository.dart';
+import '../../../shared/database/drift/app_database.dart';
+import '../../../shared/services/image_optimization_service.dart';
 import '../../../shared/ui/page_routes.dart';
 import '../../camera/camera_screen.dart';
 import '../../editor/editor_screen.dart';
@@ -16,16 +17,10 @@ class DashboardController {
   final WidgetRef ref;
   final BuildContext context;
 
-  // Selection State (In-Memory for now, or could use a Provider if we want it to persist across rebuilds better)
-  // For simplicity, we'll use a StateProvider in the file or just manage it via the ref?
-  // Since Controller is recreated on build, we should store state in a Provider.
-  // But wait, the previous code instantiates DashboardController in build().
-  // So member variables here will be lost.
-  // We need to use valid Providers for selection state.
-  
   DashboardController(this.context, this.ref);
 
-  DataRepository get _repo => ref.read(dataRepositoryProvider);
+  NotesRepository get _repo => ref.read(notesRepositoryProvider);
+  ImageOptimizationService get _imageService => ref.read(imageOptimizationServiceProvider);
 
   /// Helper to show toast messages with proper duration
   void _showToast(String message, {SnackBarAction? action}) {
@@ -43,7 +38,7 @@ class DashboardController {
   }
 
   // Helper getters for Selection
-  Set<String> get selectedItems => ref.read(selectedItemsProvider); // "note_1", "folder_2"
+  Set<String> get selectedItems => ref.read(selectedItemsProvider);
   bool get isSelectionMode => ref.read(isSelectionModeProvider);
 
   void toggleSelection(dynamic item) {
@@ -125,7 +120,6 @@ class DashboardController {
   }
 
   Future<void> handleReorder(List<dynamic> items) async {
-    // Current list is already the desired order
     await _repo.reorderItems(items);
   }
 
@@ -146,20 +140,17 @@ class DashboardController {
 
   Future<void> openFile(Note note) async {
     if (note.fileType == 'text' || note.fileType == 'rich_text') {
-      final result = await Navigator.push(
+      await Navigator.push(
         context,
         SlideUpPageRoute(
           page: EditorScreen(
             folderId: note.folderId,
-            existingNote: note,
+            existingNoteId: note.id,  // Pass ID instead of object for fresh fetch
           ),
         ),
       );
+      // Stream auto-updates, no manual cache sync needed
       
-      // Update cache if Note returned
-      if (result is Note && context.mounted) {
-        await _repo.updateNote(result);
-      }
     } else if (note.imagePath != null) {
       final result = await OpenFilex.open(note.imagePath!);
       if (result.type != ResultType.done && context.mounted) {
@@ -183,18 +174,25 @@ class DashboardController {
 
       final currentId = ref.read(currentFolderProvider);
       
+      // Generate thumbnail for images
+      String? thumbnailPath;
+      if (type == 'image') {
+        thumbnailPath = await _imageService.generateThumbnail(path);
+      }
+      
       await _repo.createNote(
         title: name,
         content: '',
         imagePath: path,
+        thumbnailPath: thumbnailPath,
         fileType: type,
         folderId: currentId,
       );
     }
   }
 
-  void navigateUp(int currentId) async {
-    final folder = _repo.findFolder(currentId);
+  Future<void> navigateUp(int currentId) async {
+    final folder = await _repo.getFolder(currentId);
     if (folder != null) {
       ref.read(currentFolderProvider.notifier).state = folder.parentId;
     } else {
@@ -274,7 +272,7 @@ class DashboardController {
       if (confirm == true) {
         for (var key in selected) {
           final parts = key.split('_');
-          final String type = parts[0]; // folder or note
+          final String type = parts[0];
           final int id = int.parse(parts[1]);
           
           if (type == 'folder') {
@@ -338,17 +336,12 @@ class DashboardController {
           final String type = parts[0];
           final int id = int.parse(parts[1]);
           
-          dynamic itemToArchive;
           if (type == 'folder') {
-             itemToArchive = _repo.findFolder(id);
+             await _repo.archiveFolder(id, archive);
           } else {
-             itemToArchive = _repo.findNote(id);
+             await _repo.archiveNote(id, archive);
           }
-          
-          if (itemToArchive != null) {
-             await _repo.archiveItem(itemToArchive, archive);
-             successCount++;
-          }
+          successCount++;
        }
        clearSelection();
        
@@ -356,7 +349,11 @@ class DashboardController {
         _showToast(archive ? 'Archived $successCount items' : 'Unarchived $successCount items');
        }
     } else {
-      await _repo.archiveItem(item, archive);
+      if (item is Folder) {
+        await _repo.archiveFolder(item.id, archive);
+      } else if (item is Note) {
+        await _repo.archiveNote(item.id, archive);
+      }
       
       if (context.mounted) {
         _showToast(
@@ -364,7 +361,11 @@ class DashboardController {
           action: SnackBarAction(
             label: 'Undo',
             onPressed: () async {
-              await _repo.archiveItem(item, !archive);
+              if (item is Folder) {
+                await _repo.archiveFolder(item.id, !archive);
+              } else if (item is Note) {
+                await _repo.archiveNote(item.id, !archive);
+              }
             },
           ),
         );
@@ -373,7 +374,11 @@ class DashboardController {
   }
 
   Future<void> restoreItem(dynamic item) async {
-    await _repo.restoreItem(item);
+    if (item is Folder) {
+      await _repo.restoreFolder(item.id);
+    } else if (item is Note) {
+      await _repo.restoreNote(item.id);
+    }
     
     if (context.mounted) {
       _showToast('Restored');
@@ -386,7 +391,7 @@ class DashboardController {
     final currentFolderId = ref.read(currentFolderProvider);
     if (currentFolderId == null) return;
     
-    final currentFolder = _repo.findFolder(currentFolderId);
+    final currentFolder = await _repo.getFolder(currentFolderId);
     final targetParentId = currentFolder?.parentId;
 
     final parts = incomingKey.split('_');

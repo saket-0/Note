@@ -1,8 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
-import '../../../shared/domain/entities/entities.dart';
+import '../../../shared/database/drift/app_database.dart';
 import '../../../shared/services/hydrated_state.dart';
 import '../controllers/dashboard_controller.dart';
 import '../providers/dashboard_state.dart';
@@ -41,6 +42,9 @@ class _DashboardContentState extends ConsumerState<DashboardContent>
   bool _isHighVelocityScroll = false;
   double _lastScrollPosition = 0;
   static const double _velocityThreshold = 2000.0; // pixels per second
+  
+  // Precache tracking
+  int _lastPrecacheMinIndex = -1;
 
   @override
   void initState() {
@@ -112,15 +116,22 @@ class _DashboardContentState extends ConsumerState<DashboardContent>
       });
     }
 
-    // Fetch Source of Truth
-    final List<dynamic> sourceItems;
+    // Fetch Source of Truth from streams
+    final AsyncValue<List<dynamic>> asyncItems;
     if (widget.currentFilter == DashboardFilter.active) {
-      sourceItems = ref.watch(activeContentProvider(currentFolderId));
+      asyncItems = ref.watch(activeContentStreamProvider(currentFolderId));
     } else if (widget.currentFilter == DashboardFilter.archived) {
-      sourceItems = ref.watch(archivedContentProvider);
+      asyncItems = ref.watch(archivedContentStreamProvider);
     } else {
-      sourceItems = ref.watch(trashContentProvider);
+      asyncItems = ref.watch(trashedContentStreamProvider);
     }
+    
+    // Handle async state
+    final List<dynamic> sourceItems = asyncItems.when(
+      data: (items) => items,
+      loading: () => _localItems, // Keep current items while loading
+      error: (e, _) => _localItems, // Keep current items on error
+    );
     
     // Sync Local State if NOT dragging
     // CRITICAL: We must sync when data changes (pin/unpin, add/remove), only block during active visual reorder
@@ -245,9 +256,15 @@ class _DashboardContentState extends ConsumerState<DashboardContent>
       final wasHighVelocity = _isHighVelocityScroll;
       _isHighVelocityScroll = estimatedVelocity > _velocityThreshold;
       
-      // Update provider only if state changed (avoids unnecessary rebuilds)
+       // Update provider only if state changed (avoids unnecessary rebuilds)
       if (wasHighVelocity != _isHighVelocityScroll) {
         ref.read(isHighVelocityScrollProvider.notifier).state = _isHighVelocityScroll;
+      }
+      
+      // === PRECACHING STRATEGY ===
+      // Only precache if velocity is reasonable (don't choke IO during flings)
+      if (!_isHighVelocityScroll) {
+         _precacheNextImages(currentPosition, notification.metrics.viewportDimension);
       }
     } else if (notification is ScrollEndNotification) {
       // Scroll ended - always resume normal loading
@@ -257,6 +274,44 @@ class _DashboardContentState extends ConsumerState<DashboardContent>
       }
     }
     return false; // Don't consume the notification
+  }
+
+  void _precacheNextImages(double scrollPos, double viewportHeight) {
+    if (_localItems.isEmpty) return;
+
+    // Approximate grid parameters
+    const double avgItemHeight = 200.0; // Average height of grid item
+    const int crossAxisCount = 2;       // Number of columns
+
+    // Calculate approx index of first visible item
+    // (scrollPos / itemHeight) * columns
+    final int firstVisibleIndex = (scrollPos / avgItemHeight).floor() * crossAxisCount;
+    
+    // Calculate approx index of last visible item
+    final int visibleItemsCount = (viewportHeight / avgItemHeight).ceil() * crossAxisCount;
+    final int lastVisibleIndex = firstVisibleIndex + visibleItemsCount;
+    
+    // Determine precache range (next 20 items)
+    final int startIndex = lastVisibleIndex;
+    final int endIndex = (startIndex + 20).clamp(0, _localItems.length);
+    
+    // Throttle: Only process if we've scrolled past the previous batch (e.g. by 10 items)
+    if ((startIndex - _lastPrecacheMinIndex).abs() < 10) return;
+    _lastPrecacheMinIndex = startIndex;
+
+    // Execute precache
+    for (int i = startIndex; i < endIndex; i++) {
+      if (i >= _localItems.length) break;
+      
+      final item = _localItems[i];
+      if (item is Note) {
+        // Prioritize thumbnail, then imagePath
+        final String? path = item.thumbnailPath ?? item.imagePath;
+        if (path != null && path.isNotEmpty) {
+           precacheImage(FileImage(File(path)), context);
+        }
+      }
+    }
   }
 
   void _errorMessageIfMismatch(List<dynamic> source) {
@@ -316,13 +371,16 @@ class _DashboardContentState extends ConsumerState<DashboardContent>
            switch (widget.currentFilter) {
              case DashboardFilter.active:
                final currentId = ref.read(currentFolderProvider);
-               freshItems = ref.read(activeContentProvider(currentId));
+               final asyncData = ref.read(activeContentStreamProvider(currentId));
+               freshItems = asyncData.valueOrNull ?? _localItems;
                break;
              case DashboardFilter.archived:
-               freshItems = ref.read(archivedContentProvider);
+               final archiveData = ref.read(archivedContentStreamProvider);
+               freshItems = archiveData.valueOrNull ?? _localItems;
                break;
              case DashboardFilter.trash:
-               freshItems = ref.read(trashContentProvider);
+               final trashData = ref.read(trashedContentStreamProvider);
+               freshItems = trashData.valueOrNull ?? _localItems;
                break;
            }
            

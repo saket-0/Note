@@ -2,8 +2,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../shared/data/data_repository.dart';
-import '../../../shared/domain/entities/entities.dart';
+import '../../../shared/data/notes_repository.dart';
+import '../../../shared/database/drift/app_database.dart';
+import '../../../shared/services/image_optimization_service.dart';
 import '../models/checklist_item.dart';
 import '../utils/history_stack.dart';
 import 'rich_text_controller.dart';
@@ -21,6 +22,7 @@ class EditorController {
   int? currentNoteId;
   DateTime createdAt = DateTime.now();
   String? imagePath;
+  String? thumbnailPath;  // NEW: Compressed thumbnail path for grid display
   List<String> attachedImages = [];
   int color = 0;
   bool isPinned = false;
@@ -44,7 +46,8 @@ class EditorController {
     required this.setState,
   });
 
-  DataRepository get _repo => ref.read(dataRepositoryProvider);
+  NotesRepository get _repo => ref.read(notesRepositoryProvider);
+  ImageOptimizationService get _imageService => ref.read(imageOptimizationServiceProvider);
 
   bool get canUndo => _history.canUndo;
   bool get canRedo => _history.canRedo;
@@ -59,12 +62,15 @@ class EditorController {
       
       createdAt = existingNote.createdAt;
       imagePath = existingNote.imagePath;
+      thumbnailPath = existingNote.thumbnailPath;  // Load existing thumbnail
       color = existingNote.color;
       isPinned = existingNote.isPinned;
       isChecklist = existingNote.isChecklist;
       position = existingNote.position;
       folderId = existingNote.folderId;
-      attachedImages = List.from(existingNote.images);
+      
+      // Load attached images from note_images table
+      _loadNoteImages(existingNote.id);
 
       if (isChecklist) {
         _parseContentToChecklist();
@@ -74,6 +80,13 @@ class EditorController {
     _history.push(contentController.serialize());
     titleController.addListener(_onTitleChanged);
     contentController.addListener(_onContentChanged);
+  }
+  
+  Future<void> _loadNoteImages(int noteId) async {
+    final images = await _repo.getNoteImages(noteId);
+    setState(() {
+      attachedImages = List.from(images);
+    });
   }
 
   void dispose() {
@@ -193,13 +206,32 @@ class EditorController {
     });
   }
 
+  /// Pick an image and generate a thumbnail for grid display.
+  /// 
+  /// The original image is stored at full resolution for editing.
+  /// A compressed thumbnail (300px, 80% quality) is generated for dashboard grid.
   Future<void> pickImage() async {
     try {
       final result = await FilePicker.platform.pickFiles(type: FileType.image);
       if (result != null && result.files.single.path != null) {
+        final originalPath = result.files.single.path!;
+        
+        // Generate compressed thumbnail for grid display
+        final generatedThumbnail = await _imageService.generateThumbnail(originalPath);
+        
         setState(() {
-          attachedImages.add(result.files.single.path!);
+          attachedImages.add(originalPath);
+          
+          // Set as primary image and thumbnail if this is the first image
+          if (imagePath == null) {
+            imagePath = originalPath;
+            thumbnailPath = generatedThumbnail;
+          }
         });
+        
+        debugPrint('[EditorController] Added image: $originalPath');
+        debugPrint('[EditorController] Thumbnail: $generatedThumbnail');
+        
         saveNote();
       }
     } catch (e) {
@@ -207,9 +239,9 @@ class EditorController {
     }
   }
 
-  Future<Note?> saveNote() async {
+  Future<void> saveNote() async {
     // Prevent concurrent saves
-    if (_isSaving) return null;
+    if (_isSaving) return;
     _isSaving = true;
     
     try {
@@ -218,35 +250,41 @@ class EditorController {
 
       if (title.isEmpty && contentController.text.isEmpty && currentNoteId == null && attachedImages.isEmpty) {
         _isSaving = false;
-        return null;
+        return;
       }
 
       if (currentNoteId != null && currentNoteId! > 0) {
         // UPDATE existing note
-        final updatedNote = Note(
-          id: currentNoteId!,
-          title: title.isEmpty ? 'Untitled' : title,
-          content: content,
-          imagePath: imagePath,
-          images: attachedImages,
-          fileType: 'rich_text',
-          folderId: folderId,
-          createdAt: createdAt,
-          color: color,
-          isPinned: isPinned,
-          isChecklist: isChecklist,
-          position: position,
-        );
+        final existingNote = await _repo.getNote(currentNoteId!);
+        if (existingNote != null) {
+          final updatedNote = Note(
+            id: currentNoteId!,
+            title: title.isEmpty ? 'Untitled' : title,
+            content: content,
+            thumbnailPath: thumbnailPath,
+            imagePath: imagePath,
+            fileType: 'rich_text',
+            folderId: folderId,
+            isPinned: isPinned,
+            position: position,
+            color: color,
+            isChecklist: isChecklist,
+            isArchived: existingNote.isArchived,
+            isDeleted: existingNote.isDeleted,
+            createdAt: createdAt,
+          );
 
-        await _repo.updateNote(updatedNote);
+          await _repo.updateNote(updatedNote, images: attachedImages);
+        }
+        
         _isSaving = false;
-        return updatedNote;
         
       } else {
         // CREATE new note
         final realId = await _repo.createNote(
           title: title.isEmpty ? 'Untitled' : title,
           content: content,
+          thumbnailPath: thumbnailPath,
           imagePath: imagePath,
           images: attachedImages,
           fileType: 'rich_text',
@@ -258,32 +296,15 @@ class EditorController {
         
         currentNoteId = realId;
         _isSaving = false;
-        
-        return Note(
-          id: realId,
-          title: title.isEmpty ? 'Untitled' : title,
-          content: content,
-          imagePath: imagePath,
-          images: attachedImages,
-          fileType: 'rich_text',
-          folderId: folderId,
-          createdAt: DateTime.now(),
-          color: color,
-          isPinned: isPinned,
-          isChecklist: isChecklist,
-          position: position,
-        );
       }
     } catch (e) {
       debugPrint('Error saving note: $e');
       _isSaving = false;
-      return null;
     }
   }
 
   Future<void> deleteNote() async {
     if (currentNoteId != null) {
-      // Cache-first delete via repository
       await _repo.deleteNote(currentNoteId!, permanent: false);
     }
     if (context.mounted) {

@@ -6,8 +6,8 @@ library;
 
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../../shared/data/data_repository.dart';
-import '../../../../shared/domain/entities/entities.dart';
+import '../../../../shared/data/notes_repository.dart';
+import '../../../../shared/database/drift/app_database.dart';
 import '../../../../shared/services/folder_service.dart';
 import '../providers/dashboard_state.dart';
 import 'providers/selection_providers.dart';
@@ -24,7 +24,7 @@ class SelectionController {
   
   SelectionController(this._ref);
   
-  DataRepository get _repo => _ref.read(dataRepositoryProvider);
+  NotesRepository get _repo => _ref.read(notesRepositoryProvider);
   Set<String> get selectedItems => _ref.read(selectedItemsProvider);
   bool get isSelectionMode => _ref.read(isSelectionModeProvider);
   
@@ -85,33 +85,42 @@ class SelectionController {
   
   /// Pin/Unpin all selected notes
   Future<void> pinSelectedItems(bool pin) async {
-    final items = _getSelectedNotes();
-    // Optimistic: Update UI immediately, then persist
-    for (final note in items) {
-      await _repo.updateNote(note.copyWith(isPinned: pin));
+    for (final key in selectedItems) {
+      final parsed = _parseKey(key);
+      if (parsed != null && parsed.type == 'note') {
+        await _repo.updateNoteFields(parsed.id, isPinned: pin);
+      }
     }
     clearSelection();
   }
   
   /// Set color for all selected notes
   Future<void> setColorForSelected(int color) async {
-    final items = _getSelectedNotes();
-    for (final note in items) {
-      await _repo.updateNote(note.copyWith(color: color));
+    for (final key in selectedItems) {
+      final parsed = _parseKey(key);
+      if (parsed != null && parsed.type == 'note') {
+        await _repo.updateNoteFields(parsed.id, color: color);
+      }
     }
     clearSelection();
   }
   
   /// Archive all selected items (batch operation - instant UI update)
   Future<void> archiveSelectedItems(bool archive) async {
-    final items = getSelectedItems();
+    final items = _parseSelectedKeys();
     if (items.isEmpty) return;
     
     // Collect keys BEFORE archiving (for immediate UI removal)
     final keysToRemove = selectedItems.toSet();
     
-    // Single batch call: updates cache, triggers ONE UI rebuild, then DB persist
-    await _repo.archiveItems(items, archive);
+    // Archive each item
+    for (final item in items) {
+      if (item.type == 'folder') {
+        await _repo.archiveFolder(item.id, archive);
+      } else {
+        await _repo.archiveNote(item.id, archive);
+      }
+    }
     
     // Signal immediate removal from grid (only when archiving, not unarchiving)
     if (archive) {
@@ -123,14 +132,20 @@ class SelectionController {
   
   /// Delete all selected items (batch operation - instant UI update)
   Future<void> deleteSelectedItems({required bool permanent}) async {
-    final items = getSelectedItems();
+    final items = _parseSelectedKeys();
     if (items.isEmpty) return;
     
     // Collect keys BEFORE deleting (for immediate UI removal)
     final keysToRemove = selectedItems.toSet();
     
-    // Single batch call: updates cache, triggers ONE UI rebuild, then DB persist
-    await _repo.deleteItems(items, permanent: permanent);
+    // Delete each item
+    for (final item in items) {
+      if (item.type == 'folder') {
+        await _repo.deleteFolder(item.id, permanent: permanent);
+      } else {
+        await _repo.deleteNote(item.id, permanent: permanent);
+      }
+    }
     
     // Signal immediate removal from grid
     _ref.read(pendingRemovalKeysProvider.notifier).state = keysToRemove;
@@ -142,8 +157,9 @@ class SelectionController {
   // HELPERS
   // ============================================
   
-  /// Get all selected items (notes and folders)
-  List<dynamic> getSelectedItems() {
+  /// Get all selected items as parsed keys
+  /// Returns a list of (type, id) for each selected item.
+  Future<List<dynamic>> getSelectedItems() async {
     final items = <dynamic>[];
     for (final key in selectedItems) {
       final parsed = _parseKey(key);
@@ -151,14 +167,38 @@ class SelectionController {
       
       dynamic item;
       if (parsed.type == 'folder') {
-        item = _repo.findFolder(parsed.id);
+        item = await _repo.getFolder(parsed.id);
       } else {
-        item = _repo.findNote(parsed.id);
+        item = await _repo.getNote(parsed.id);
       }
       
       if (item != null) items.add(item);
     }
     return items;
+  }
+  
+  /// Parse selected keys without fetching from DB
+  List<_ParsedKey> _parseSelectedKeys() {
+    final items = <_ParsedKey>[];
+    for (final key in selectedItems) {
+      final parsed = _parseKey(key);
+      if (parsed != null) items.add(parsed);
+    }
+    return items;
+  }
+  
+  _ParsedKey? _parseKey(String key) {
+    try {
+      final parts = key.split('_');
+      if (parts.length != 2) return null;
+      return _ParsedKey(type: parts[0], id: int.parse(parts[1]));
+    } catch (_) {
+      return null;
+    }
+  }
+  
+  String _getItemKey(dynamic item) {
+    return (item is Folder) ? "folder_${item.id}" : "note_${item.id}";
   }
   
   // ============================================
@@ -171,7 +211,7 @@ class SelectionController {
   /// On failure: keeps selection (allow retry), returns null
   Future<int?> groupSelectedIntoFolder(String folderName, int? parentId) async {
     final folderService = _ref.read(folderServiceProvider);
-    final items = getSelectedItems();
+    final items = await getSelectedItems();
     
     if (items.isEmpty) {
       return null;
@@ -198,32 +238,6 @@ class SelectionController {
       return folderId;
     } catch (e) {
       // Error handled by FolderService, do NOT clear selection
-      return null;
-    }
-  }
-  
-  String _getItemKey(dynamic item) {
-    return (item is Folder) ? "folder_${item.id}" : "note_${item.id}";
-  }
-  
-  List<Note> _getSelectedNotes() {
-    final notes = <Note>[];
-    for (final key in selectedItems) {
-      final parsed = _parseKey(key);
-      if (parsed != null && parsed.type == 'note') {
-        final note = _repo.findNote(parsed.id);
-        if (note != null) notes.add(note);
-      }
-    }
-    return notes;
-  }
-  
-  _ParsedKey? _parseKey(String key) {
-    try {
-      final parts = key.split('_');
-      if (parts.length != 2) return null;
-      return _ParsedKey(type: parts[0], id: int.parse(parts[1]));
-    } catch (_) {
       return null;
     }
   }

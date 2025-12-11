@@ -1,9 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../../shared/data/data_repository.dart';
-import '../../../shared/domain/entities/entities.dart';
-
-// Re-export for backward compatibility
-export '../../../shared/domain/entities/entities.dart';
+import '../../../shared/data/notes_repository.dart';
+import '../../../shared/database/drift/app_database.dart';
 
 // ===========================================
 // FILTER & VIEW STATE
@@ -29,59 +26,79 @@ final pendingRemovalKeysProvider = StateProvider<Set<String>>((ref) => {});
 final isHighVelocityScrollProvider = StateProvider<bool>((ref) => false);
 
 // ===========================================
-// REACTIVE DATA PROVIDERS
-// Uses version from DataRepository for automatic updates
+// REACTIVE STREAM PROVIDERS (Drift-powered)
 // ===========================================
 
-/// Version counter that triggers rebuilds on data changes
-final dataVersionProvider = StateProvider<int>((ref) => 0);
-
-/// Active content for a folder - rebuilds when version changes
-final activeContentProvider = Provider.family<List<dynamic>, int?>((ref, folderId) {
-  // Watch the version counter to trigger rebuilds
-  final version = ref.watch(dataVersionProvider);
-  print('[PROVIDER] activeContentProvider called, version=$version, folderId=$folderId');
-  
-  final repo = ref.read(dataRepositoryProvider);
-  return repo.getActiveContent(folderId);
+/// Active content stream for current folder - auto-updates when DB changes
+/// This replaces the old version-counter approach with true reactivity.
+final activeContentStreamProvider = StreamProvider.family<List<dynamic>, int?>((ref, folderId) {
+  final repo = ref.watch(notesRepositoryProvider);
+  return repo.watchActiveContent(folderId);
 });
 
-/// Archived content - rebuilds when version changes
-final archivedContentProvider = Provider<List<dynamic>>((ref) {
-  ref.watch(dataVersionProvider);
-  
-  final repo = ref.read(dataRepositoryProvider);
-  return repo.getArchivedContent();
+/// Archived content stream - auto-updates when DB changes
+final archivedContentStreamProvider = StreamProvider<List<dynamic>>((ref) {
+  final repo = ref.watch(notesRepositoryProvider);
+  return repo.watchArchivedContent();
 });
 
-/// Trashed content - rebuilds when version changes
-final trashContentProvider = Provider<List<dynamic>>((ref) {
-  ref.watch(dataVersionProvider);
-  
-  final repo = ref.read(dataRepositoryProvider);
-  return repo.getTrashedContent();
+/// Trashed content stream - auto-updates when DB changes
+final trashedContentStreamProvider = StreamProvider<List<dynamic>>((ref) {
+  final repo = ref.watch(notesRepositoryProvider);
+  return repo.watchTrashedContent();
 });
 
-/// Folder details lookup
-final folderDetailsProvider = Provider.family<Folder?, int>((ref, id) {
-  ref.watch(dataVersionProvider);
-  
-  final repo = ref.read(dataRepositoryProvider);
-  return repo.findFolder(id);
+/// Folders stream for a parent - auto-updates when DB changes
+final foldersStreamProvider = StreamProvider.family<List<Folder>, int?>((ref, parentId) {
+  final repo = ref.watch(notesRepositoryProvider);
+  return repo.watchFolders(parentId);
+});
+
+/// Notes stream for a folder - auto-updates when DB changes
+final notesStreamProvider = StreamProvider.family<List<Note>, int?>((ref, folderId) {
+  final repo = ref.watch(notesRepositoryProvider);
+  return repo.watchNotes(folderId);
+});
+
+// ===========================================
+// LEGACY SYNC PROVIDERS (for backward compatibility)
+// These use FutureProvider to bridge async lookups
+// ===========================================
+
+/// Folder details lookup (async)
+final folderDetailsProvider = FutureProvider.family<Folder?, int>((ref, id) async {
+  final repo = ref.watch(notesRepositoryProvider);
+  return repo.getFolder(id);
 });
 
 /// Get all image paths for a folder (for preloading)
-final folderImagePathsProvider = Provider.family<List<String>, int?>((ref, folderId) {
-  ref.watch(dataVersionProvider);
-  
-  final repo = ref.read(dataRepositoryProvider);
+final folderImagePathsProvider = FutureProvider.family<List<String>, int?>((ref, folderId) async {
+  final repo = ref.watch(notesRepositoryProvider);
   return repo.getImagePathsForFolder(folderId);
 });
 
 /// Get subfolder IDs for prefetching
-final subfolderIdsProvider = Provider.family<List<int>, int?>((ref, parentId) {
-  ref.watch(dataVersionProvider);
-  
-  final repo = ref.read(dataRepositoryProvider);
+final subfolderIdsProvider = FutureProvider.family<List<int>, int?>((ref, parentId) async {
+  final repo = ref.watch(notesRepositoryProvider);
   return repo.getSubfolderIds(parentId);
+});
+
+// ===========================================
+// CONVENIENCE PROVIDERS
+// ===========================================
+
+/// Current folder's content based on active filter
+/// Returns the appropriate stream based on filter selection
+final currentContentProvider = Provider<AsyncValue<List<dynamic>>>((ref) {
+  final filter = ref.watch(activeFilterProvider);
+  final folderId = ref.watch(currentFolderProvider);
+  
+  switch (filter) {
+    case DashboardFilter.active:
+      return ref.watch(activeContentStreamProvider(folderId));
+    case DashboardFilter.archived:
+      return ref.watch(archivedContentStreamProvider);
+    case DashboardFilter.trash:
+      return ref.watch(trashedContentStreamProvider);
+  }
 });

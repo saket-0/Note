@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../shared/domain/entities/entities.dart';
+import '../../shared/data/notes_repository.dart';
+import '../../shared/database/drift/app_database.dart';
 import 'controllers/editor_controller.dart';
 import 'models/checklist_item.dart';
 import 'widgets/editor_app_bar.dart';
@@ -13,9 +14,17 @@ import 'models/formatting_span.dart';
 
 class EditorScreen extends ConsumerStatefulWidget {
   final int? folderId;
+  final int? existingNoteId;  // Pass ID for fresh fetch from DB
+  
+  // Legacy support: still accept Note object
   final Note? existingNote;
 
-  const EditorScreen({super.key, this.folderId, this.existingNote});
+  const EditorScreen({
+    super.key, 
+    this.folderId, 
+    this.existingNoteId,
+    this.existingNote,
+  });
 
   @override
   ConsumerState<EditorScreen> createState() => _EditorScreenState();
@@ -25,8 +34,10 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   final _titleController = TextEditingController();
   late RichTextController _contentController; 
   late EditorController _controller;
+  
+  bool _isLoading = true;
+  Note? _loadedNote;
 
-  // 4. Add bool _showFormattingToolbar = false;.
   bool _showFormattingToolbar = false;
 
   final List<Color> _noteColors = [
@@ -58,7 +69,31 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
         if (mounted) setState(fn);
       }
     );
-    _controller.init(widget.existingNote, widget.folderId);
+    
+    _initializeNote();
+  }
+  
+  Future<void> _initializeNote() async {
+    Note? noteToLoad;
+    
+    // Priority 1: Fetch by ID (fresh from DB)
+    if (widget.existingNoteId != null) {
+      final repo = ref.read(notesRepositoryProvider);
+      noteToLoad = await repo.getNote(widget.existingNoteId!);
+    }
+    // Priority 2: Use passed Note object (legacy support)
+    else if (widget.existingNote != null) {
+      noteToLoad = widget.existingNote;
+    }
+    
+    _loadedNote = noteToLoad;
+    _controller.init(noteToLoad, widget.folderId);
+    
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   @override
@@ -84,10 +119,6 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
       backgroundColor: const Color(0xFF303134),
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
       builder: (context) {
-        // Rebuild this when state changes? BottomSheet is separate subtree.
-        // We need to wrap this in a StatefulBuilder or ValueListenableBuilder if we want it to react to selection changes LIVE while open.
-        // Or just close/reopen?
-        // Better: Use `ValueListenableBuilder(valueListenable: _contentController, ...)`
         return ValueListenableBuilder(
           valueListenable: _contentController,
           builder: (context, value, child) {
@@ -129,12 +160,6 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     return GestureDetector(
       onTap: () {
         onTap();
-        // Keep open? Or pop?
-        // Usually toggle keeps open. User might want to apply multiple.
-        // But original code popped.
-        // If I want to see highlight change, I should keep it open?
-        // Let's keep it open for "Toggle" experience.
-        // Navigator.pop(context); // REMOVED POP
       },
       child: Container(
         width: 44,
@@ -159,10 +184,6 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
     );
   }
 
-
-  
-  // ...
-
   void _toggleFormatToolbar() {
     setState(() {
       _showFormattingToolbar = !_showFormattingToolbar;
@@ -171,13 +192,21 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
   
   @override
   Widget build(BuildContext context) {
-    // ... existing colors ...
+    // Show loading while fetching note
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+    
     final Color bgColor = _controller.color == 0 
         ? Theme.of(context).scaffoldBackgroundColor 
         : Color(_controller.color);
-    // ... existing contentColor ...
     final bool isDark = bgColor.computeLuminance() < 0.5;
     final Color contentColor = isDark ? const Color(0xFFE8EAED) : Colors.black87;
+    
+    final bool isNewNote = _loadedNote == null;
 
     return PopScope(
       canPop: false,
@@ -190,7 +219,6 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
       },
       child: Scaffold(
         backgroundColor: bgColor,
-        // Ensure resizeToAvoidBottomInset is true (default)
         resizeToAvoidBottomInset: true, 
         appBar: EditorAppBar(
           isPinned: _controller.isPinned,
@@ -213,7 +241,7 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                 isChecklist: _controller.isChecklist,
                 attachedImages: _controller.attachedImages,
                 createdAt: _controller.createdAt,
-                isNewNote: widget.existingNote == null, // Enable autofocus for new notes
+                isNewNote: isNewNote,
                 onImageRemove: (index) {
                   setState(() => _controller.attachedImages.removeAt(index));
                   _controller.saveNote();
@@ -237,7 +265,6 @@ class _EditorScreenState extends ConsumerState<EditorScreen> {
                 contentColor: contentColor,
               ),
             ),
-            // TOOLBAR MOVED TO BODY
             EditorToolbar(
               onAddImage: _controller.pickImage,
               onColorPalette: _showColorPicker,

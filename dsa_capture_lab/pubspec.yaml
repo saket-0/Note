@@ -14,8 +14,10 @@ dependencies:
   flutter_riverpod: ^2.5.1
   riverpod_annotation: ^2.3.5
 
-  # --- Database (No Code Gen) ---
-  sqflite: ^2.3.0
+  # --- Database (Drift with Background Isolate) ---
+  drift: ^2.15.0
+  drift_flutter: ^0.1.0
+  sqlite3_flutter_libs: ^0.5.18
   path: ^1.8.3
   
   # --- Camera & Hardware ---
@@ -41,9 +43,9 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^3.0.2
   
-  # --- Code Generators (Removed build_runner) ---
-  # Only keeping riverpod_generator if needed, but avoiding running it.
-  # riverpod_generator: ^2.4.0 
+  # --- Code Generators (Drift) ---
+  build_runner: ^2.4.8
+  drift_dev: ^2.15.0
 
 flutter:
   uses-material-design: true

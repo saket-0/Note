@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../dashboard/providers/dashboard_state.dart';
 import '../../../shared/data/data_repository.dart';
-import '../../../shared/domain/entities/entities.dart';
+import '../../../shared/database/drift/app_database.dart';
 import '../../../shared/services/asset_pipeline/asset_pipeline_service.dart';
 import '../models/batch_camera_state.dart';
 export '../models/batch_camera_state.dart';
@@ -29,32 +29,37 @@ class CameraViewModel extends StateNotifier<BatchCameraState> {
   }
 
   // Lock to prevent duplicate folder creation race conditions
-  Future<void>? _folderCreationFuture;
+  Future<int>? _folderCreationFuture;
 
-  Future<void> _createBatchFolder(int? parentFolderId) async {
+  Future<int> _createBatchFolder(int? parentFolderId) async {
       final String folderName = "Batch ${DateTime.now().hour}:${DateTime.now().minute}:${DateTime.now().second}";
       final newFolderId = await _repo.createFolder(
         name: folderName,
         parentId: parentFolderId,
       );
-      state = state.copyWith(activeBatchFolderId: newFolderId);
+      if (mounted) {
+        state = state.copyWith(activeBatchFolderId: newFolderId);
+      }
+      return newFolderId;
   }
 
   // Instant Batch Save - ZERO-LATENCY via ingestImmediate()
   Future<void> captureBatchPhoto(String path, int? parentFolderId) async {
+    int? targetFolderId = state.activeBatchFolderId;
+
     // 1. Ensure Batch Folder Exists (Atomic Check)
-    if (state.activeBatchFolderId == null) {
+    if (targetFolderId == null) {
       if (_folderCreationFuture != null) {
-        await _folderCreationFuture;
+        targetFolderId = await _folderCreationFuture;
       } else {
         _folderCreationFuture = _createBatchFolder(parentFolderId);
-        await _folderCreationFuture;
+        targetFolderId = await _folderCreationFuture;
         _folderCreationFuture = null;
       }
     }
     
-    // Safety check
-    if (state.activeBatchFolderId == null) return;
+    // Safety check - if creation failed or ID is somehow null
+    if (targetFolderId == null) return;
 
     // === ZERO-LATENCY INGESTION ===
     // Read bytes and inject into RAM immediately
@@ -72,13 +77,13 @@ class CameraViewModel extends StateNotifier<BatchCameraState> {
       title: "Img ${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}",
       content: "",
       imagePath: path,
-      folderId: state.activeBatchFolderId, // Use guaranteed ID
+      folderId: targetFolderId, // Use guaranteed ID
       fileType: 'image',
     );
 
     // Get the created note from cache for local state
     final createdNote = _repo.findNote(noteId);
-    if (createdNote != null) {
+    if (mounted && createdNote != null) {
       state = state.copyWith(capturedItems: [...state.capturedItems, createdNote]);
     }
   }
